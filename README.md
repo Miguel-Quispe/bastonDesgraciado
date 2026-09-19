@@ -40,6 +40,8 @@ Al abrir la aplicación, el micrófono estará siempre activo. Puedes decir los 
 | :--- | :--- | :--- |
 | **Enlazar Bastón** | *"Bastón conéctate"*, *"Enlazar bastón"* | Inicia la conexión Bluetooth con el ESP32 y activa la escucha de alertas. |
 | **Desconectar** | *"Bastón desconectar"* | Cierra la conexión Bluetooth de forma limpia. |
+| **Guíame a un Lugar** | *"Bastón guíame a la farmacia"*, *"Llévame al parque"* | Calcula la ruta peatonal, la distancia y comienza a guiarte paso a paso por voz. |
+| **Cancelar Ruta** | *"Bastón cancelar ruta"*, *"Detener guía"* | Detiene la navegación activa inmediatamente. |
 | **Dónde Estoy** | *"Bastón dónde estoy"*, *"Mi ubicación"* | Obtiene tu posición GPS y te dice tu dirección en voz alta. |
 | **Escanear Entorno**| *"Bastón mira"*, *"Foto"*, *"Qué hay al frente"* | Toma una foto y describe los obstáculos cercanos con su posición. |
 | **Compartir App** | *"Bastón código QR"*, *"Comparte"* | Muestra el código QR en pantalla para compartir el proyecto. |

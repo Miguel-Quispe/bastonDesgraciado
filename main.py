@@ -23,11 +23,12 @@ class BastonApp(App):
         self.voz = SpeechEngine()
         self.gps = LocationService()
         self.vision = VisionAnalyzer()
+        self.evento_navegacion = None
 
         self.layout = BoxLayout(orientation='vertical', padding=25, spacing=20)
         
         self.lbl_estado = Label(
-            text="Asistente de Autonomía\nEscucha continua activa. Di 'Bastón' seguido de tu comando.",
+            text="Asistente de Autonomía\nEscucha activa. Di 'Bastón' seguido de tu comando.",
             font_size='22sp',
             bold=True,
             color=(1, 1, 1, 1),
@@ -105,7 +106,7 @@ class BastonApp(App):
         self.img_qr.opacity = 0
 
         # NODO 1: Conexión con el Bastón ESP32
-        if any(w in texto for w in ["conectar", "conéctate", "conectate", "baston", "bastón", "enlazar"]):
+        if any(w in texto for w in ["conectar", "conéctate", "conectate", "baston", "bastón", "enlazar"]) and not any(w in texto for w in ["guía", "guia", "llévame", "llevame", "ir"]):
             if "desconectar" in texto:
                 self.bt.desconectar()
                 self.lbl_estado.text = "Bastón desconectado."
@@ -121,8 +122,38 @@ class BastonApp(App):
                     self.voz.hablar("No se pudo establecer la conexión Bluetooth con el bastón.")
                     self.lbl_estado.text = "Error: Sin conexión Bluetooth"
 
-        # NODO 2: Petición de Ubicación GPS y Geocodificación
-        elif any(w in texto for w in ["ubicación", "ubicacion", "dónde estoy", "donde estoy", "lugar"]):
+        # NODO 2: Navegación y Guiado a un Destino (Voz o Coordenadas)
+        elif any(w in texto for w in ["guíame", "guiame", "llévame", "llevame", "ir a", "cómo llego", "como llego", "navegar a"]):
+            lugar = texto
+            for prefijo in ["guíame a", "guiame a", "llévame a", "llevame a", "ir a", "cómo llego a", "como llego a", "navegar a"]:
+                if prefijo in lugar:
+                    lugar = lugar.split(prefijo)[-1].strip()
+                    break
+            
+            if not lugar:
+                lugar = "Farmacia Central"
+
+            self.voz.hablar(f"Calculando ruta hacia {lugar}...")
+            lat, lon = self.gps.obtener_coordenadas()
+            mensaje_guia = self.gps.buscar_y_establecer_destino(lugar, lat, lon)
+            self.lbl_estado.text = mensaje_guia
+            self.voz.hablar(mensaje_guia)
+
+            # Iniciar monitoreo periódico de guiado
+            if not self.evento_navegacion:
+                self.evento_navegacion = Clock.schedule_interval(self._monitorear_navegacion, 12)
+
+        # NODO 3: Cancelar Navegación Activa
+        elif any(w in texto for w in ["cancelar ruta", "detener guía", "detener guia", "parar ruta", "cancelar navegación"]):
+            self.gps.cancelar_navegacion()
+            if self.evento_navegacion:
+                self.evento_navegacion.cancel()
+                self.evento_navegacion = None
+            self.lbl_estado.text = "Ruta cancelada."
+            self.voz.hablar("Ruta de navegación cancelada.")
+
+        # NODO 4: Petición de Ubicación GPS actual
+        elif any(w in texto for w in ["ubicación", "ubicacion", "dónde estoy", "donde estoy", "lugar"]) and not any(w in texto for w in ["guía", "guia", "llévame"]):
             self.voz.hablar("Obteniendo tu ubicación actual.")
             lat, lon = self.gps.obtener_coordenadas()
             if lat is not None:
@@ -133,7 +164,7 @@ class BastonApp(App):
                 self.voz.hablar("No se pudo obtener la señal GPS.")
                 self.lbl_estado.text = "Error: GPS no disponible"
 
-        # NODO 3: Generación de QR de la App
+        # NODO 5: Generación de QR de la App
         elif any(w in texto for w in ["qr", "comparte", "compartir", "código", "codigo"]):
             ruta_qr = self.generar_qr_compartir()
             self.lbl_estado.text = "Código QR generado"
@@ -143,15 +174,29 @@ class BastonApp(App):
                 self.img_qr.opacity = 1
             self.voz.hablar("Código QR generado en la pantalla para compartir la aplicación.")
 
-        # NODO 4: Análisis Visual Puntual con Cámara e IA MiniCPM-5
+        # NODO 6: Análisis Visual Puntual con Cámara e IA YOLO
         elif any(w in texto for w in ["foto", "ver", "cámara", "camara", "entorno", "obstáculo", "obstaculo", "mira", "que hay", "qué hay"]):
             self.voz.hablar("Analizando el entorno con la cámara.")
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision)
 
-        # NODO 5: Saludo o activación simple
+        # NODO 7: Saludo o activación simple
         elif texto in ["activado", "hola", "estás ahí", "estas ahi", "ayuda"]:
-            self.voz.hablar("Sí, aquí estoy. Puedes pedirme tu ubicación, conectar el bastón o analizar el entorno.")
+            self.voz.hablar("Sí, aquí estoy. Puedes pedirme tu ubicación, guiarte a un destino, conectar el bastón o analizar el entorno.")
             self.lbl_estado.text = "Listo para tus comandos."
+
+    def _monitorear_navegacion(self, dt):
+        """Monitorea el avance del usuario hacia el destino y emite avisos por voz."""
+        if not self.gps.navegacion_activa:
+            if self.evento_navegacion:
+                self.evento_navegacion.cancel()
+                self.evento_navegacion = None
+            return
+
+        lat, lon = self.gps.obtener_coordenadas()
+        instruccion = self.gps.obtener_instruccion_guia(lat, lon)
+        if instruccion:
+            self.lbl_estado.text = f"Navegación:\n{instruccion}"
+            self.voz.hablar(instruccion)
 
     def al_recibir_alerta_baston(self, mensaje_alerta):
         Clock.schedule_once(lambda dt: self._actualizar_ui_alerta(mensaje_alerta), 0)
@@ -173,7 +218,7 @@ class BastonApp(App):
         self.voz.hablar(resultado_texto)
 
     def generar_qr_compartir(self):
-        url_repo = "https://github.com/adidas2019x"
+        url_repo = "https://github.com/Miguel-Quispe/bastonDesgraciado"
         img = qrcode.make(url_repo)
         ruta_salida = "qr_app.png"
         img.save(ruta_salida)
@@ -181,6 +226,8 @@ class BastonApp(App):
 
     def on_stop(self):
         """Cierre limpio de conexiones y servicios."""
+        if self.evento_navegacion:
+            self.evento_navegacion.cancel()
         if hasattr(self, 'voz'):
             self.voz.detener_escucha()
         if hasattr(self, 'bt'):
