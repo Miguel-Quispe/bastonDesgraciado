@@ -21,7 +21,7 @@ source.exclude_dirs = tests,bin,.venv,.git,.github
 version = 1.0.0
 
 # (list) Application requirements
-requirements = python3,kivy,requests,pyjnius,pillow
+requirements = python3,kivy,requests,pyjnius,pillow,qrcode
 
 # (str) Supported orientation (one of landscape, sensorLandscape, portrait or all)
 orientation = portrait

@@ -1,5 +1,9 @@
 import os
-import qrcode
+try:
+    import qrcode
+except ImportError:
+    qrcode = None
+
 from kivy.app import App
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
@@ -59,19 +63,42 @@ class BastonApp(App):
 
         return self.layout
 
+    def solicitar_permisos_android(self):
+        try:
+            from android.permissions import request_permissions, Permission
+            permisos = [
+                Permission.CAMERA,
+                Permission.RECORD_AUDIO,
+                Permission.ACCESS_FINE_LOCATION,
+                Permission.ACCESS_COARSE_LOCATION,
+            ]
+            try:
+                permisos.append(Permission.BLUETOOTH_CONNECT)
+                permisos.append(Permission.BLUETOOTH_SCAN)
+            except AttributeError:
+                pass
+            request_permissions(permisos)
+        except Exception as e:
+            print(f"[BastonApp] Permisos nativos no aplicados: {e}")
+
     def on_start(self):
         """Inicia los servicios automáticos al abrir la aplicación."""
-        # 1. Sugerencia de auriculares si no están conectados
-        if not self.voz.estan_auriculares_conectados():
-            self.voz.hablar("Bienvenido. ¿Deseas conectar auriculares para mayor privacidad? La escucha continua está activa.")
-        else:
-            self.voz.hablar("Asistente listo. Te escucho.")
+        self.solicitar_permisos_android()
+        try:
+            if not self.voz.estan_auriculares_conectados():
+                self.voz.hablar("Bienvenido. ¿Deseas conectar auriculares para mayor privacidad? La escucha continua está activa.")
+            else:
+                self.voz.hablar("Asistente listo. Te escucho.")
+        except Exception as e:
+            print(f"[BastonApp] Error en bienvenida voz: {e}")
 
-        # 2. Iniciar escucha continua offline con Vosk
-        self.voz.iniciar_escucha_continua(
-            callback_comando=self.procesar_comando_texto,
-            callback_parcial=self.al_recibir_parcial
-        )
+        try:
+            self.voz.iniciar_escucha_continua(
+                callback_comando=self.procesar_comando_texto,
+                callback_parcial=self.al_recibir_parcial
+            )
+        except Exception as e:
+            print(f"[BastonApp] Error iniciando escucha continua: {e}")
 
     def al_presionar_boton_escucha(self, instance):
         """Alterna entre pausar y reactivar la escucha continua."""
@@ -218,6 +245,8 @@ class BastonApp(App):
         self.voz.hablar(resultado_texto)
 
     def generar_qr_compartir(self):
+        if not qrcode:
+            return ""
         url_repo = "https://github.com/Miguel-Quispe/bastonDesgraciado"
         img = qrcode.make(url_repo)
         ruta_salida = "qr_app.png"
