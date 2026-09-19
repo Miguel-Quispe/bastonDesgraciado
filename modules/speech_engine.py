@@ -13,8 +13,16 @@ class SpeechEngine:
         self.reconocedor_vosk = None
         self.modelo_vosk = None
         
-        # Palabras de activación configurables (por defecto: bastón / oye bastón)
-        self.palabras_activacion = palabras_activacion if palabras_activacion is not None else ["bastón", "baston", "oye baston", "oye bastón", "hola baston", "hola bastón"]
+        # Archivo de configuración persistente
+        self.archivo_config = os.path.join(os.getcwd(), "config_asistente.json")
+        self.nombre_asistente = self._cargar_config_nombre()
+
+        # Palabras de activación configurables (dinámicas según el nombre guardado)
+        if palabras_activacion is not None:
+            self.palabras_activacion = palabras_activacion
+        else:
+            self._reconstruir_palabras_activacion()
+
         self.requiere_palabra_activacion = True
         
         # Ruta del modelo Vosk
@@ -22,6 +30,45 @@ class SpeechEngine:
         
         self._inicializar_android()
         self._inicializar_vosk()
+
+    def _cargar_config_nombre(self):
+        """Carga el nombre personalizado del asistente guardado en disco."""
+        try:
+            if os.path.exists(self.archivo_config):
+                with open(self.archivo_config, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return data.get("nombre", "bastón").lower().strip()
+        except Exception as e:
+            print(f"[SpeechEngine] Error al cargar config nombre: {e}")
+        return "bastón"
+
+    def _reconstruir_palabras_activacion(self):
+        """Genera el listado de frases de activación con el nombre activo."""
+        nombre = self.nombre_asistente
+        self.palabras_activacion = [
+            nombre,
+            f"oye {nombre}",
+            f"hola {nombre}",
+            f"ok {nombre}",
+            "bastón", "baston" # Respaldo secundario siempre disponible
+        ]
+
+    def actualizar_nombre_asistente(self, nuevo_nombre):
+        """Cambia el nombre de activación del asistente y lo guarda de forma persistente."""
+        nombre_limpio = nuevo_nombre.lower().strip()
+        if not nombre_limpio:
+            return
+
+        self.nombre_asistente = nombre_limpio
+        self._reconstruir_palabras_activacion()
+
+        try:
+            with open(self.archivo_config, "w", encoding="utf-8") as f:
+                json.dump({"nombre": self.nombre_asistente}, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"[SpeechEngine] Error al guardar config de nombre: {e}")
+
+        self.hablar(f"Entendido. A partir de ahora responderé al nombre de {self.nombre_asistente.capitalize()}.")
 
     def _inicializar_android(self):
         try:

@@ -99,7 +99,8 @@ class BastonApp(App):
         self.solicitar_permisos_android()
         self.emitir_vibracion_bienvenida()
 
-        mensaje_bienvenida = "Aplicación Bastón Inteligente iniciada. Asistente de voz activo. Te escucho. Di Bastón seguido de tu comando."
+        nombre_actual = self.voz.nombre_asistente.capitalize()
+        mensaje_bienvenida = f"Aplicación iniciada. Asistente activo con el nombre {nombre_actual}. Te escucho. Di {nombre_actual} seguido de tu comando."
         
         try:
             self.voz.hablar(mensaje_bienvenida)
@@ -145,6 +146,21 @@ class BastonApp(App):
 
         self.lbl_estado.text = f"Comando: {texto}"
         self.img_qr.opacity = 0
+
+        # NODO 0: Personalizar Nombre de Activación del Asistente (ej. "cambiar nombre a Rayo", "llámate Rayo", "tu nuevo nombre es Rayo")
+        if any(w in texto for w in ["cambiar nombre a", "cambiar palabra a", "llámate", "llamate", "tu nombre es", "nuevo nombre", "llamarte"]):
+            nuevo_nombre = texto
+            for prefijo in ["cambiar nombre a", "cambiar palabra a", "llámate a", "llamate a", "llámate", "llamate", "tu nombre es", "nuevo nombre", "llamarte"]:
+                if prefijo in nuevo_nombre:
+                    nuevo_nombre = nuevo_nombre.split(prefijo)[-1].strip()
+                    break
+            
+            if nuevo_nombre:
+                self.voz.actualizar_nombre_asistente(nuevo_nombre)
+                self.lbl_estado.text = f"Nombre del asistente: {nuevo_nombre.capitalize()}"
+            else:
+                self.voz.hablar(f"No entendí el nuevo nombre. Mi nombre actual es {self.voz.nombre_asistente.capitalize()}.")
+            return
 
         # NODO 1: Conexión con el Bastón ESP32
         if any(w in texto for w in ["conectar", "conéctate", "conectate", "baston", "bastón", "enlazar"]) and not any(w in texto for w in ["guía", "guia", "llévame", "llevame", "ir"]):
