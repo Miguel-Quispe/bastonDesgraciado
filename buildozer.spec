@@ -56,7 +56,7 @@ android.copy_libs = 1
 
 [buildozer]
 # (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
-log_level = 2
+log_level = 1
 
 # (int) Display warning if buildozer is run as root (0 = off, 1 = on)
 warn_on_root = 1

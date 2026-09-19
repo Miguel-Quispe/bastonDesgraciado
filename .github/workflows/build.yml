@@ -15,21 +15,45 @@ jobs:
       - name: Checkout del código
         uses: actions/checkout@v4
 
-      - name: Descargar Modelo Vosk Offline Español
-        run: |
-          mkdir -p model
-          wget -q https://alphacephei.com/vosk/models/vosk-model-small-es-0.42.zip
-          unzip -q vosk-model-small-es-0.42.zip
-          cp -r vosk-model-small-es-0.42/* model/
-          rm -rf vosk-model-small-es-0.42.zip vosk-model-small-es-0.42
+      - name: Configurar Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      - name: Compilar APK con imagen oficial de Kivy (Docker)
+      - name: Instalar dependencias del sistema y Java 17
         run: |
-          docker pull kivy/buildozer
-          docker run --rm \
-            -v ${{ github.workspace }}:/home/user/hostcwd \
-            kivy/buildozer \
-            android debug
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            ffmpeg \
+            libsdl2-dev \
+            libsdl2-image-dev \
+            libsdl2-mixin-dev \
+            libsdl2-ttf-dev \
+            libportmidi-dev \
+            libswscale-dev \
+            libavformat-dev \
+            libavcodec-dev \
+            zlib1g-dev \
+            openjdk-17-jdk \
+            autoconf \
+            libtool \
+            pkg-config \
+            cmake \
+            libffi-dev \
+            libssl-dev \
+            zip \
+            unzip
+
+      - name: Instalar Buildozer y Cython compatible
+        run: |
+          pip install --upgrade pip
+          pip install "cython<3.0.0" buildozer
+
+      - name: Compilar APK con Buildozer
+        run: |
+          yes | buildozer android debug
 
       - name: Subir artefacto APK generado
         uses: actions/upload-artifact@v4
