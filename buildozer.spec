@@ -22,7 +22,7 @@ version = 1.0.0
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy,requests,qrcode,pillow,pyjnius,numpy
+requirements = python3,kivy,requests,urllib3,idna,certifi,chardet,pyjnius,pillow,png,jpeg,numpy
 
 # (str) Supported orientation (one of landscape, sensorLandscape, portrait or all)
 orientation = portrait
@@ -56,7 +56,7 @@ android.copy_libs = 1
 
 [buildozer]
 # (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
-log_level = 1
+log_level = 2
 
 # (int) Display warning if buildozer is run as root (0 = off, 1 = on)
 warn_on_root = 1
