@@ -57,6 +57,9 @@ android.logcat_filters = *:S python:D
 # (bool) Copy library instead of making a symlink
 android.copy_libs = 1
 
+# (str) python-for-android git branch to use
+p4a.branch = develop
+
 [buildozer]
 # (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
 log_level = 1
