@@ -23,16 +23,17 @@ jobs:
           cp -r vosk-model-small-es-0.42/* model/
           rm -rf vosk-model-small-es-0.42.zip vosk-model-small-es-0.42
 
-      - name: Compilar APK con Docker Buildozer (Kivy Preconfigurado)
-        uses: ArtemSBulgakov/buildozer-action@v1
-        id: buildozer
-        with:
-          command: buildozer android debug
-          buildozer_version: stable
+      - name: Compilar APK con imagen oficial de Kivy (Docker)
+        run: |
+          docker pull kivy/buildozer
+          docker run --rm \
+            -v ${{ github.workspace }}:/home/user/hostcwd \
+            kivy/buildozer \
+            android debug
 
       - name: Subir artefacto APK generado
         uses: actions/upload-artifact@v4
         with:
           name: BastonApp-Debug-APK
-          path: ${{ steps.buildozer.outputs.filename }}
+          path: bin/*.apk
           retention-days: 14
