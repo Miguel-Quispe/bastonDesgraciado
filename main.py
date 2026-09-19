@@ -81,16 +81,30 @@ class BastonApp(App):
         except Exception as e:
             print(f"[BastonApp] Permisos nativos no aplicados: {e}")
 
-    def on_start(self):
-        """Inicia los servicios automáticos al abrir la aplicación."""
-        self.solicitar_permisos_android()
+    def emitir_vibracion_bienvenida(self):
+        """Emite una vibración háptica al abrir la app para confirmación táctil del usuario no vidente."""
         try:
-            if not self.voz.estan_auriculares_conectados():
-                self.voz.hablar("Bienvenido. ¿Deseas conectar auriculares para mayor privacidad? La escucha continua está activa.")
-            else:
-                self.voz.hablar("Asistente listo. Te escucho.")
+            from jnius import autoclass
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            Context = autoclass('android.content.Context')
+            activity = PythonActivity.mActivity
+            vibrator = activity.getSystemService(Context.VIBRATOR_SERVICE)
+            if vibrator:
+                vibrator.vibrate(300)
         except Exception as e:
-            print(f"[BastonApp] Error en bienvenida voz: {e}")
+            print(f"[BastonApp] Vibración no disponible: {e}")
+
+    def on_start(self):
+        """Inicia los servicios automáticos y emite aviso táctil y auditivo para personas no videntes."""
+        self.solicitar_permisos_android()
+        self.emitir_vibracion_bienvenida()
+
+        mensaje_bienvenida = "Aplicación Bastón Inteligente iniciada. Asistente de voz activo. Te escucho. Di Bastón seguido de tu comando."
+        
+        try:
+            self.voz.hablar(mensaje_bienvenida)
+        except Exception as e:
+            print(f"[BastonApp] Error en bienvenida por voz: {e}")
 
         try:
             self.voz.iniciar_escucha_continua(

@@ -49,7 +49,7 @@ class SpeechEngine:
         except Exception as e:
             print(f"[SpeechEngine] Error al cargar Vosk ({e}). Modo simulación.")
 
-    def hablar(self, texto):
+    def hablar(self, texto, reintentos=2):
         """Convierte texto a voz mediante el motor nativo de Android o consola en desarrollo."""
         print(f"[TTS Audio Output]: {texto}")
         if self.tts:
@@ -58,7 +58,10 @@ class SpeechEngine:
                 Locale = autoclass('java.util.Locale')
                 self.tts.setLanguage(Locale("es", "ES"))
                 # QUEUE_FLUSH = 0 para interrumpir y hablar de inmediato
-                self.tts.speak(texto, 0, None, None)
+                res = self.tts.speak(texto, 0, None, None)
+                # Si el motor TTS de Android aún estaba inicializando, reintentar en 0.8s
+                if res != 0 and reintentos > 0:
+                    Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.8)
             except Exception as e:
                 print(f"[SpeechEngine] Error al reproducir TTS: {e}")
 
