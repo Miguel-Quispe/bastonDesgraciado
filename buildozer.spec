@@ -42,6 +42,9 @@ android.minapi = 24
 # (str) Android NDK version to use
 android.ndk = 25b
 
+# (int) Minimum API required by the NDK
+android.ndk_api = 24
+
 # (bool) Automatically accept SDK licenses
 android.accept_sdk_license = True
 
@@ -56,7 +59,7 @@ android.copy_libs = 1
 
 [buildozer]
 # (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
-log_level = 2
+log_level = 1
 
 # (int) Display warning if buildozer is run as root (0 = off, 1 = on)
 warn_on_root = 1
