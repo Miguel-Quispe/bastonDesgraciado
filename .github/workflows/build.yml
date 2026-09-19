@@ -53,7 +53,7 @@ jobs:
 
       - name: Compilar APK con Buildozer
         run: |
-          yes | buildozer android debug
+          buildozer android debug
 
       - name: Subir artefacto APK generado
         uses: actions/upload-artifact@v4
