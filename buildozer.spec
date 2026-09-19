@@ -22,7 +22,7 @@ version = 1.0.0
 
 # (list) Application requirements
 # comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy,requests,qrcode,pillow,pyjnius,vosk,numpy
+requirements = python3,kivy,requests,qrcode,pillow,pyjnius,numpy
 
 # (str) Supported orientation (one of landscape, sensorLandscape, portrait or all)
 orientation = portrait
@@ -46,7 +46,7 @@ android.ndk = 25b
 android.accept_sdk_license = True
 
 # (list) List of Android architectures to build for
-android.archs = arm64-v8a, armeabi-v7a
+android.archs = arm64-v8a
 
 # (bool) Enable Android logcat filter
 android.logcat_filters = *:S python:D
