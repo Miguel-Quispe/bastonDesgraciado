@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+env/
+
+# Buildozer / Android
+.buildozer/
+bin/
+*.apk
+*.aab
+
+# Modelos binarios grandes si no se quieren en el repo directo (opcional)
+# *.tflite
+# model/

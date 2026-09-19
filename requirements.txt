@@ -1,0 +1,7 @@
+kivy>=2.2.0
+requests>=2.28.0
+qrcode>=7.4.0
+pillow>=9.0.0
+pyjnius>=1.4.0
+vosk>=0.3.45
+numpy>=1.22.0
