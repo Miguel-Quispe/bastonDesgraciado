@@ -15,14 +15,13 @@ source.dir = .
 source.include_exts = py,png,jpg,kv,atlas,json,txt,model,bin,pb,tflite,onnx
 
 # (list) List of directory to exclude (let empty to not exclude anything)
-source.exclude_dirs = tests, bin, .venv, .git, .github
+source.exclude_dirs = tests,bin,.venv,.git,.github
 
 # (str) Application versioning (method 1)
 version = 1.0.0
 
 # (list) Application requirements
-# comma separated e.g. requirements = sqlite3,kivy
-requirements = python3,kivy,requests,urllib3,idna,certifi,chardet,pyjnius,pillow,numpy
+requirements = python3,kivy,requests,pyjnius,pillow
 
 # (str) Supported orientation (one of landscape, sensorLandscape, portrait or all)
 orientation = portrait
@@ -31,7 +30,7 @@ orientation = portrait
 fullscreen = 1
 
 # (list) Permissions
-android.permissions = BLUETOOTH, BLUETOOTH_ADMIN, BLUETOOTH_CONNECT, BLUETOOTH_SCAN, ACCESS_FINE_LOCATION, ACCESS_COARSE_LOCATION, RECORD_AUDIO, INTERNET, CAMERA
+android.permissions = BLUETOOTH,BLUETOOTH_ADMIN,BLUETOOTH_CONNECT,BLUETOOTH_SCAN,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,RECORD_AUDIO,INTERNET,CAMERA
 
 # (int) Target Android API, should be as high as possible.
 android.api = 33
@@ -51,18 +50,15 @@ android.accept_sdk_license = True
 # (list) List of Android architectures to build for
 android.archs = arm64-v8a
 
-# (bool) Enable Android logcat filter
-android.logcat_filters = *:S python:D
-
 # (bool) Copy library instead of making a symlink
 android.copy_libs = 1
 
-# (str) python-for-android git branch to use
-p4a.branch = develop
+# (str) python-for-android release tag to use
+p4a.branch = v2024.01.21
 
 [buildozer]
 # (int) Log level (0 = error only, 1 = info, 2 = debug (with command output))
-log_level = 1
+log_level = 2
 
 # (int) Display warning if buildozer is run as root (0 = off, 1 = on)
 warn_on_root = 1

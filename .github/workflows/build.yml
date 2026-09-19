@@ -26,7 +26,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Instalar dependencias del sistema y Java 17
+      - name: Instalar dependencias del sistema
         run: |
           sudo apt-get update
           sudo apt-get install -y \
@@ -42,7 +42,6 @@ jobs:
             libavformat-dev \
             libavcodec-dev \
             zlib1g-dev \
-            openjdk-17-jdk \
             autoconf \
             libtool \
             pkg-config \
@@ -52,10 +51,14 @@ jobs:
             zip \
             unzip
 
-      - name: Instalar Buildozer y Cython compatible
+      - name: Instalar Buildozer y dependencias de compilación
         run: |
-          pip install --upgrade pip
-          pip install "cython<3.0.0" buildozer
+          python -m pip install --upgrade pip
+          python -m pip install "buildozer==1.5.0" "cython==0.29.37"
+
+      - name: Limpiar compilaciones anteriores
+        run: |
+          rm -rf .buildozer bin
 
       - name: Compilar APK con Buildozer
         run: |
