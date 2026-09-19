@@ -16,6 +16,8 @@ from modules.bluetooth_manager import BluetoothManager
 from modules.speech_engine import SpeechEngine
 from modules.location_service import LocationService
 from modules.vision_analyzer import VisionAnalyzer
+from modules.agenda_manager import AgendaManager
+from modules.document_reader import DocumentReader
 
 class BastonApp(App):
     def build(self):
@@ -27,6 +29,8 @@ class BastonApp(App):
         self.voz = SpeechEngine()
         self.gps = LocationService()
         self.vision = VisionAnalyzer()
+        self.agenda = AgendaManager()
+        self.lector = DocumentReader()
         self.evento_navegacion = None
 
         self.layout = BoxLayout(orientation='vertical', padding=25, spacing=20)
@@ -236,9 +240,35 @@ class BastonApp(App):
             self.voz.hablar("Analizando el entorno con la cámara.")
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision)
 
-        # NODO 7: Saludo o activación simple
+        # NODO 7: Lectura de Documentos, Hojas y Etiquetas por Voz
+        elif any(w in texto for w in ["leer documento", "lee documento", "leer hoja", "lee esta hoja", "leer texto", "lee el texto", "leer etiqueta", "lee la etiqueta", "lectura"]):
+            self.voz.hablar("Capturando documento para lectura por voz.")
+            self.lector.capturar_y_leer(self.al_completar_lectura_documento)
+
+        # NODO 8: Agenda Personal por Voz (Consultar, Anotar o Limpiar)
+        elif any(w in texto for w in ["mi agenda", "ver agenda", "consultar agenda", "mis recordatorios", "qué tengo agendado", "que tengo agendado"]):
+            resumen = self.agenda.consultar_agenda()
+            self.lbl_estado.text = f"Agenda:\n{resumen}"
+            self.voz.hablar(resumen)
+
+        elif any(w in texto for w in ["borrar agenda", "limpiar agenda", "borrar recordatorios"]):
+            resumen = self.agenda.borrar_agenda()
+            self.lbl_estado.text = f"Agenda: Limpiada"
+            self.voz.hablar(resumen)
+
+        elif any(w in texto for w in ["anotar", "agendar", "recordar", "guardar nota", "agregar recordatorio"]):
+            nota = texto
+            for prefijo in ["anotar", "agendar", "recordar que", "recordar", "guardar nota", "agregar recordatorio"]:
+                if prefijo in nota:
+                    nota = nota.split(prefijo)[-1].strip()
+                    break
+            resumen = self.agenda.agregar_evento(nota if nota else texto)
+            self.lbl_estado.text = f"Agenda:\n{resumen}"
+            self.voz.hablar(resumen)
+
+        # NODO 9: Saludo o activación simple
         elif texto in ["activado", "hola", "estás ahí", "estas ahi", "ayuda"]:
-            self.voz.hablar("Sí, aquí estoy. Puedes pedirme tu ubicación, guiarte a un destino, conectar el bastón o analizar el entorno.")
+            self.voz.hablar("Sí, aquí estoy. Puedo ayudarte a leer documentos, gestionar tu agenda, guiarte a un lugar, conectar tu bastón o analizar el entorno.")
             self.lbl_estado.text = "Listo para tus comandos."
 
     def _monitorear_navegacion(self, dt):
@@ -273,6 +303,10 @@ class BastonApp(App):
     def al_completar_analisis_vision(self, resultado_texto):
         self.lbl_estado.text = f"Visión: {resultado_texto}"
         self.voz.hablar(resultado_texto)
+
+    def al_completar_lectura_documento(self, texto_leido):
+        self.lbl_estado.text = f"Lectura: {texto_leido}"
+        self.voz.hablar(texto_leido)
 
     def generar_qr_compartir(self):
         if not qrcode:

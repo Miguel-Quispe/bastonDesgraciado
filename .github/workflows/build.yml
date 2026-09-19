@@ -67,6 +67,6 @@ jobs:
       - name: Subir artefacto APK generado
         uses: actions/upload-artifact@v4
         with:
-          name: BastonApp-Debug-APK
+          name: Baston-0.2-APK
           path: bin/*.apk
           retention-days: 14
