@@ -6,13 +6,34 @@ import urllib.parse
 import threading
 from kivy.clock import Clock
 
+def _directorio_datos_app():
+    """Devuelve el directorio de datos persistente: user_data_dir en Android, cwd en PC."""
+    try:
+        from kivy.app import App
+        app = App.get_running_app()
+        if app and hasattr(app, 'user_data_dir') and app.user_data_dir:
+            return app.user_data_dir
+    except Exception:
+        pass
+    return os.getcwd()
+
 class AIAssistant:
     def __init__(self):
-        self.archivo_config = os.path.join(os.getcwd(), "config_gemini.json")
+        # La ruta se resuelve en tiempo de uso para que user_data_dir ya esté disponible
+        self._config_nombre = "config_gemini.json"
+        # No hardcodeamos la clave en el código fuente por seguridad.
+        # La clave se carga desde config_gemini.json (en user_data_dir en Android)
+        # o desde la variable de entorno GEMINI_API_KEY.
+        self.api_key_defecto = ""
         self.api_key = self._cargar_api_key()
 
+
+    @property
+    def archivo_config(self):
+        return os.path.join(_directorio_datos_app(), self._config_nombre)
+
     def _cargar_api_key(self):
-        """Carga la API Key de Gemini desde variables de entorno o archivo de configuración."""
+        """Carga la API Key de Gemini desde variables de entorno, archivo de config o clave por defecto."""
         env_key = os.environ.get("GEMINI_API_KEY", "").strip()
         if env_key:
             return env_key
@@ -20,10 +41,13 @@ class AIAssistant:
             if os.path.exists(self.archivo_config):
                 with open(self.archivo_config, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    return data.get("api_key", "").strip()
+                    key_conf = data.get("api_key", "").strip()
+                    if key_conf:
+                        return key_conf
         except Exception as e:
             print(f"[AIAssistant] Error al cargar config API Key: {e}")
-        return ""
+        return self.api_key_defecto
+
 
     def guardar_api_key(self, nueva_key):
         """Guarda la API Key de forma persistente."""

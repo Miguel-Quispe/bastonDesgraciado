@@ -207,13 +207,47 @@ class SpeechEngine:
                 Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.6)
                 return
 
+            # ANTI-ECO: Detener el micrófono ANTES de reproducir audio para evitar que el SpeechRecognizer
+            # capture la voz del propio asistente y genere un bucle.
+            self.reproduciendo_tts = True
+            self._detener_speech_recognizer_android()
+
             try:
-                from jnius import autoclass
+                from jnius import autoclass, PythonJavaClass, java_method
                 Locale = autoclass('java.util.Locale')
                 try:
                     self.tts.setLanguage(Locale("es", "ES"))
                 except Exception:
                     pass
+
+                # Registrar listener de progreso para saber cuándo terminó el TTS
+                class UtteranceListener(PythonJavaClass):
+                    __javainterfaces__ = ['android/speech/tts/UtteranceProgressListener']
+                    def __init__(self, engine_ref):
+                        super().__init__()
+                        self.engine_ref = engine_ref
+
+                    @java_method('(Ljava/lang/String;)V')
+                    def onStart(self, utteranceId):
+                        pass
+
+                    @java_method('(Ljava/lang/String;)V')
+                    def onDone(self, utteranceId):
+                        # Esperar un momento extra antes de reactivar el mic (el sonido tarda en disiparse)
+                        import time
+                        time.sleep(0.8)
+                        self.engine_ref.reproduciendo_tts = False
+                        if self.engine_ref.escuchando:
+                            Clock.schedule_once(lambda dt: self.engine_ref._reiniciar_escucha_android(), 0)
+
+                    @java_method('(Ljava/lang/String;)V')
+                    def onError(self, utteranceId):
+                        self.engine_ref.reproduciendo_tts = False
+                        if self.engine_ref.escuchando:
+                            Clock.schedule_once(lambda dt: self.engine_ref._reiniciar_escucha_android(), 0)
+
+                self._tts_utterance_listener = UtteranceListener(self)
+                self.tts.setOnUtteranceProgressListener(self._tts_utterance_listener)
 
                 # En Android, QUEUE_FLUSH = 0
                 res = -1
@@ -226,12 +260,42 @@ class SpeechEngine:
                         print(f"[SpeechEngine Android] Error en speak legacy: {e2}")
 
                 if res != 0 and reintentos > 0:
-                    print(f"[SpeechEngine Android] speak devolvió código {res}. Reintentando en 0.6s...")
+                    print(f"[SpeechEngine Android] speak devolvio codigo {res}. Reintentando en 0.6s...")
+                    self.reproduciendo_tts = False
                     Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.6)
             except Exception as e:
                 print(f"[SpeechEngine Android] Error al reproducir TTS: {e}")
+                self.reproduciendo_tts = False
         else:
             self._cola_tts.put(texto)
+
+    def _detener_speech_recognizer_android(self):
+        """Detiene el SpeechRecognizer de Android para evitar que el micrófono capture el audio del TTS."""
+        try:
+            if not hasattr(self, 'speech_rec') or not self.speech_rec:
+                return
+            from jnius import autoclass, PythonJavaClass, java_method
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
+            class Runnable(PythonJavaClass):
+                __javainterfaces__ = ['java/lang/Runnable']
+                def __init__(self, func):
+                    super().__init__()
+                    self.func = func
+                @java_method('()V')
+                def run(self):
+                    self.func()
+
+            def parar():
+                try:
+                    self.speech_rec.stopListening()
+                except Exception as ex:
+                    print(f"[SpeechEngine] stopListening error: {ex}")
+
+            PythonActivity.mActivity.runOnUiThread(Runnable(parar))
+        except Exception as e:
+            print(f"[SpeechEngine] _detener_speech_recognizer_android error: {e}")
+
 
 
 
@@ -358,9 +422,9 @@ class SpeechEngine:
                 @java_method('(I)V')
                 def onError(self, error):
                     # Error 6 = ERROR_SPEECH_TIMEOUT, 7 = ERROR_NO_MATCH
-                    print(f"[SpeechRecognizer Android] Aviso estado micrófono ({error}).")
+                    print(f"[SpeechRecognizer Android] Aviso estado microfono ({error}).")
+                    # No reiniciar si el TTS esta activo: el UtteranceProgressListener lo hara en onDone
                     if self.engine.escuchando and not getattr(self.engine, 'reproduciendo_tts', False):
-                        # Evitar bucle de parpadeo/reinicio constante del micrófono usando retardo prudente
                         retardo = 2.5 if error in [6, 7] else 3.5
                         Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), retardo)
 
@@ -375,8 +439,10 @@ class SpeechEngine:
                     except Exception as e:
                         print(f"[SpeechRecognizer Error Resultados]: {e}")
                     
+                    # Solo reiniciar el mic si el TTS NO esta activo.
+                    # Si el TTS esta hablando, el UtteranceProgressListener reactivara el mic en onDone.
                     if self.engine.escuchando and not getattr(self.engine, 'reproduciendo_tts', False):
-                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 1.5)
+                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 2.0)
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onPartialResults(self, partialResults):
