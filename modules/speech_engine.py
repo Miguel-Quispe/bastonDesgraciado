@@ -365,7 +365,7 @@ class SpeechEngine:
                 
                 intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                 intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es")
                 intent.putExtra(RecognizerIntent.EXTRA_PROMPT, f"Di tu comando o 'Hola {self.nombre_asistente.capitalize()}'...")
                 
                 self.activity.startActivityForResult(intent, 1001)
@@ -529,7 +529,7 @@ class SpeechEngine:
 
                     self.intent_escucha = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+                    self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es")
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
                     try:
                         self.intent_escucha.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)

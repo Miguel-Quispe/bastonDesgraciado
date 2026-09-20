@@ -345,7 +345,7 @@ class BastonApp(App):
             return
 
         # NODO 3: Agenda Personal (Evaluado antes de Visión para que 'ver agenda' no active la cámara)
-        if any(w in texto for w in ["borrar agenda", "limpiar agenda", "borrar recordatorios", "vaciar agenda"]):
+        if any(w in texto for w in ["borrar agenda", "limpiar agenda", "borrar recordatorios", "limpiar recordatorios", "vaciar agenda"]):
             resumen = self.agenda.borrar_agenda()
             self.lbl_estado.text = f"Agenda: Limpiada"
             self.voz.hablar(resumen)
@@ -415,7 +415,7 @@ class BastonApp(App):
             return
 
         # NODO 7: Conexión Bastón ESP32 / Bluetooth (Dirección MAC: 30:C9:22:32:F5:D6)
-        if any(w in texto for w in ["conectar baston", "conectar", "conectate", "desconectar", "enlazar baston", "vincular baston", "bluetooth", "baston"]) and not any(w in texto for w in ["guia", "llevame", "ir", "hola", "agenda", "dime", "donde"]):
+        if any(w in texto for w in ["conectar baston", "conectar", "conectate", "desconectar", "enlazar baston", "enlazar", "vincular baston", "vincular", "bluetooth", "baston"]) and not any(w in texto for w in ["guia", "llevame", "ir", "hola", "agenda", "dime", "donde"]):
             if "desconectar" in texto:
                 self.bt.desconectar()
                 self.lbl_estado.text = "Bastón desconectado."
