@@ -229,6 +229,12 @@ class BastonApp(App):
         except Exception as e:
             print(f"[BastonApp] Error iniciando escucha continua: {e}")
 
+        # Intentar conectar automáticamente al Bastón ESP32 al iniciar la app
+        try:
+            self.bt.conectar_async(self.al_completar_conexion_baston)
+        except Exception as e:
+            print(f"[BastonApp] Error iniciando conexión Bluetooth automática: {e}")
+
     def al_recibir_resultado_actividad(self, request_code, result_code, intent_data):
         """Recibe el resultado del micrófono nativo de Android por Intent."""
         if request_code == 1001 and result_code == -1 and intent_data:

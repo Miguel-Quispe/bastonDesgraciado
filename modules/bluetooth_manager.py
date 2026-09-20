@@ -33,13 +33,43 @@ class BluetoothManager:
             device = adapter.getRemoteDevice(self.mac_address)
             spp_uuid = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
             
-            # Intento de conexión con socket RFCOMM
-            self.socket = device.createRfcommSocketToServiceRecord(spp_uuid)
-            self.socket.connect()
-            self.conectado = True
-            self.modo_simulacion = False
-            print("[BluetoothManager] Conexión establecida exitosamente con el ESP32.")
-            return True
+            # Intento 1: Socket seguro SPP (Estándar)
+            try:
+                print("[BluetoothManager] Intentando conexión RFCOMM seguro...")
+                self.socket = device.createRfcommSocketToServiceRecord(spp_uuid)
+                self.socket.connect()
+                self.conectado = True
+                self.modo_simulacion = False
+                print("[BluetoothManager] Conexión establecida exitosamente (RFCOMM seguro).")
+                return True
+            except Exception as e1:
+                print(f"[BluetoothManager] Intento 1 (RFCOMM seguro) falló: {e1}. Probando RFCOMM inseguro...")
+
+            # Intento 2: Socket inseguro SPP (Recomendado para ESP32 en Android)
+            try:
+                self.socket = device.createInsecureRfcommSocketToServiceRecord(spp_uuid)
+                self.socket.connect()
+                self.conectado = True
+                self.modo_simulacion = False
+                print("[BluetoothManager] Conexión establecida exitosamente (RFCOMM inseguro).")
+                return True
+            except Exception as e2:
+                print(f"[BluetoothManager] Intento 2 (RFCOMM inseguro) falló: {e2}. Probando método de reflexión canal 1...")
+
+            # Intento 3: Método oculto por reflexión en canal 1
+            try:
+                Integer = autoclass('java.lang.Integer')
+                method = device.getClass().getMethod("createRfcommSocket", Integer.TYPE)
+                self.socket = method.invoke(device, 1)
+                self.socket.connect()
+                self.conectado = True
+                self.modo_simulacion = False
+                print("[BluetoothManager] Conexión establecida exitosamente (Canal 1 reflexión).")
+                return True
+            except Exception as e3:
+                print(f"[BluetoothManager] Intento 3 (Reflexión) falló: {e3}")
+                raise e3
+
         except ImportError:
             print("[BluetoothManager] PyJNiUS no disponible (Entorno PC). Bluetooth no disponible.")
             self.conectado = False
