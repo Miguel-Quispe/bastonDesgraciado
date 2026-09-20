@@ -17,6 +17,9 @@ source.include_exts = py,png,jpg,kv,atlas,json,txt,model,bin,pb,tflite,onnx
 # (list) List of directory to exclude (let empty to not exclude anything)
 source.exclude_dirs = tests,bin,.venv,.git,.github
 
+# Archivos locales/sensibles que no deben quedar dentro del APK.
+source.exclude_patterns = config_gemini.json,config_asistente.json,agenda_personal.json
+
 # (str) Application versioning (method 1)
 version = 0.5
 

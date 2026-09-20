@@ -33,42 +33,104 @@ class AIAssistant:
     def __init__(self):
         self._config_nombre = "config_gemini.json"
         self.api_key_defecto = ""
+        self.ultimo_error_config = ""
         self.api_key = self._cargar_api_key()
 
     @property
     def archivo_config(self):
         return os.path.join(_directorio_datos_app(), self._config_nombre)
 
+    def _rutas_config_posibles(self):
+        rutas = [self.archivo_config]
+        ruta_local = os.path.join(os.getcwd(), self._config_nombre)
+        if ruta_local not in rutas:
+            rutas.append(ruta_local)
+        return rutas
+
+    def limpiar_api_key(self, api_key):
+        """Normaliza una clave copiada desde teclado, portapapeles o voz."""
+        if not api_key:
+            return ""
+
+        key = str(api_key).strip().strip('"').strip("'")
+        for separador in ["api_key=", "api key=", "clave=", "key="]:
+            if key.lower().startswith(separador):
+                key = key[len(separador):].strip()
+                break
+
+        return "".join(key.split())
+
+    def es_api_key_gemini_valida(self, api_key):
+        """Validación local básica para evitar guardar claves de otro servicio."""
+        key = self.limpiar_api_key(api_key)
+        return key.startswith("AIza") and len(key) >= 30
+
+    def _leer_api_key_desde_archivo(self, ruta):
+        try:
+            if not os.path.exists(ruta):
+                return ""
+
+            with open(ruta, "r", encoding="utf-8") as f:
+                contenido = f.read().strip()
+
+            if not contenido:
+                return ""
+
+            try:
+                data = json.loads(contenido)
+                key_conf = data.get("api_key") or data.get("key") or data.get("gemini_api_key") or ""
+            except Exception:
+                key_conf = contenido
+
+            return self.limpiar_api_key(key_conf)
+        except Exception as e:
+            print(f"[AIAssistant] Error al leer config API Key ({ruta}): {e}")
+            return ""
+
     def _cargar_api_key(self):
         """Carga la API Key de Gemini desde variables de entorno, archivo de config o clave por defecto."""
-        env_key = os.environ.get("GEMINI_API_KEY", "").strip()
-        if env_key:
+        env_key = self.limpiar_api_key(os.environ.get("GEMINI_API_KEY", ""))
+        if env_key and self.es_api_key_gemini_valida(env_key):
             return env_key
-        try:
-            if os.path.exists(self.archivo_config):
-                with open(self.archivo_config, "r", encoding="utf-8") as f:
-                    data = json.load(f)
-                    key_conf = data.get("api_key", "").strip()
-                    if key_conf:
-                        print(f"[AIAssistant] API Key cargada correctamente de config ({key_conf[:6]}...)")
-                        return key_conf
-        except Exception as e:
-            print(f"[AIAssistant] Error al cargar config API Key: {e}")
+
+        for ruta in self._rutas_config_posibles():
+            key_conf = self._leer_api_key_desde_archivo(ruta)
+            if not key_conf:
+                continue
+            if self.es_api_key_gemini_valida(key_conf):
+                print(f"[AIAssistant] API Key de Gemini cargada correctamente desde: {ruta}")
+                return key_conf
+            print(f"[AIAssistant] Config ignorada: la clave no parece ser de Gemini ({ruta}).")
+
         return self.api_key_defecto
 
     def guardar_api_key(self, nueva_key):
         """Guarda la API Key de forma persistente."""
-        key_limpia = nueva_key.strip()
-        self.api_key = key_limpia
+        key_limpia = self.limpiar_api_key(nueva_key)
+        self.ultimo_error_config = ""
+
+        if not self.es_api_key_gemini_valida(key_limpia):
+            self.ultimo_error_config = "La clave no parece ser de Gemini. Debe comenzar con AIza."
+            print(f"[AIAssistant] {self.ultimo_error_config}")
+            return False
+
         try:
             ruta = self.archivo_config
+            carpeta = os.path.dirname(ruta)
+            if carpeta:
+                os.makedirs(carpeta, exist_ok=True)
             with open(ruta, "w", encoding="utf-8") as f:
                 json.dump({"api_key": key_limpia}, f, ensure_ascii=False)
+            self.api_key = key_limpia
             print(f"[AIAssistant] Clave API guardada en: {ruta}")
             return True
         except Exception as e:
+            self.ultimo_error_config = "No se pudo guardar la clave en el almacenamiento de la app."
             print(f"[AIAssistant] Error al guardar config API Key: {e}")
             return False
+
+    def tiene_api_key_configurada(self):
+        return self.es_api_key_gemini_valida(self.api_key)
 
     def responder_consulta_local(self, texto_normalizado, texto_original):
         """Procesa preguntas comunes offline (hora, fecha, ayuda, identidad, sistema)."""
@@ -112,7 +174,9 @@ class AIAssistant:
         """Realiza la petición HTTP REST a Gemini Flash con modelos de respaldo."""
         key = self.api_key or self._cargar_api_key()
         if not key:
-            return "Puedo decirte la hora, la fecha, tu ubicación, leer documentos o consultar tu agenda. Guarda tu clave API de Gemini desplegando el panel de configuración."
+            return "La clave API de Gemini no está configurada. Abre configurar clave API y pega una clave válida que empiece con AIza."
+        if not self.es_api_key_gemini_valida(key):
+            return "La clave guardada no parece ser de Gemini. Borra esa clave y pega una clave válida que empiece con AIza."
 
         modelos = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-1.5-flash"]
         
@@ -164,7 +228,7 @@ class AIAssistant:
         threading.Thread(target=_hilo_vision, daemon=True).start()
 
     def _consultar_gemini_vision_api(self, ruta_imagen, prompt_instruccion):
-        if not self.api_key:
+        if not self.es_api_key_gemini_valida(self.api_key):
             return None
 
         if not os.path.exists(ruta_imagen):

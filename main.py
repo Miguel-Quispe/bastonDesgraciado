@@ -166,8 +166,9 @@ class BastonApp(App):
             # Cerrar el panel automáticamente
             self.al_toggle_panel_api(None)
         else:
-            self.lbl_estado.text = "❌ Error al guardar la clave. Verifica el almacenamiento."
-            self.voz.hablar("Ocurrió un error al guardar la clave.")
+            detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API de Gemini válida."
+            self.lbl_estado.text = f"❌ Error al guardar la clave. {detalle}"
+            self.voz.hablar(detalle)
 
 
 
@@ -448,8 +449,19 @@ class BastonApp(App):
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision, ai_assistant=self.ai)
             return
 
-        # NODO 10: Guardar Clave API de Gemini por Voz o Teclado
-        if any(w in texto for w in ["guardar clave", "guardar api key", "guardar clave api"]):
+        # NODO 10: Configurar / Guardar Clave API de Gemini por Voz o Teclado
+        quiere_guardar_api = any(w in texto for w in ["guardar clave", "guardar api key", "guardar clave api"])
+
+        if not quiere_guardar_api and any(w in texto for w in ["configurar clave", "configurar api", "clave api", "api gemini"]):
+            if self.ai.tiene_api_key_configurada():
+                self.voz.hablar("La clave API de Gemini ya está configurada.")
+            else:
+                self.voz.hablar("Abriendo configuración. Pega una clave API de Gemini válida que empiece con AIza.")
+            if self.panel_api.opacity == 0:
+                self.al_toggle_panel_api(None)
+            return
+
+        if quiere_guardar_api:
             nueva_key = texto_comando
             for pref in ["guardar clave api", "guardar clave", "guardar api key"]:
                 pref_norm = normalizar_texto(pref)
@@ -464,10 +476,11 @@ class BastonApp(App):
                     self.lbl_estado.text = "Clave API de Gemini guardada."
                     self.voz.hablar("Clave API de Gemini guardada correctamente.")
                 else:
-                    self.lbl_estado.text = "Error al guardar API Key."
-                    self.voz.hablar("Ocurrió un error al guardar la clave.")
+                    detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API de Gemini válida."
+                    self.lbl_estado.text = f"Error al guardar API Key. {detalle}"
+                    self.voz.hablar(detalle)
             else:
-                self.voz.hablar("No detecté la clave API. Repite guardar clave seguido de tu clave.")
+                self.voz.hablar("No detecté la clave API. Es mejor pegarla desde el panel de configuración para evitar errores al dictarla.")
             return
 
         # NODO 11: Consultas Locales Offline (Hora, Fecha, Identidad, Estado)
