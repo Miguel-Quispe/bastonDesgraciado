@@ -711,7 +711,8 @@ class SpeechEngine:
         # 2. Búsqueda exhaustiva por coincidencias de cualquier intención
         coincidencias_clave = [
             # Visión / Obstáculos / Frente
-            "frente", "delante", "adelante", "enfrente", "que hay", "que veo", "que ves", "que miras",
+            "frente", "al frente", "alfrente", "delante", "adelante", "enfrente", "que hay", "que veo", "que ves", "que miras",
+            "que esta", "que tengo", "que hay al frente", "que tengo al frente", "que esta al frente", "que esta alfrente",
             "mira", "mirar", "ver", "entorno", "alrededor", "camara", "foto", "obstaculo", "obstaculos",
             "analizar", "escaneo", "escanea", "objeto", "objetos", "que tenemos",
             # Ubicación GPS

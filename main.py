@@ -463,11 +463,13 @@ class BastonApp(App):
 
         # NODO 9: Análisis Visual Puntual (Cámara / YOLO / Obstáculos / Frente)
         if any(w in texto for w in [
-            "frente", "delante", "adelante", "enfrente", "que hay", "que veo", "que ves", "que miras",
+            "frente", "al frente", "alfrente", "delante", "adelante", "enfrente", "que hay", "que veo", "que ves", "que miras",
+            "que esta", "que tengo", "que hay al frente", "que tengo al frente", "que esta al frente", "que esta alfrente",
             "mira", "mirar", "ver entorno", "ver camara", "ver foto", "camara", "foto", "fotografia",
             "obstaculo", "obstaculos", "objeto", "objetos", "analizar", "escaneo", "escanea", "que tenemos"
         ]):
-            self.voz.hablar("Abriendo cámara para analizar el entorno.")
+            self.lbl_estado.text = "Tomando foto del frente..."
+            self.voz.hablar("Tomando foto del frente.")
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision, ai_assistant=self.ai)
             return
 

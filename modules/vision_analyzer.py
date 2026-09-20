@@ -308,17 +308,33 @@ class VisionAnalyzer:
 
         ruta_foto = getattr(self, 'ruta_foto_pendiente', '')
 
+        if not os.path.exists(ruta_foto):
+            callback("Visión: No pude tomar la foto del frente. Revisa el permiso de cámara e intenta de nuevo.")
+            return
+
         # Si tenemos IA Gemini activa y foto existente, usamos Gemini Vision para análisis visual completo
-        if getattr(self, 'ai_assistant', None) and self.ai_assistant.api_key and os.path.exists(ruta_foto):
+        if getattr(self, 'ai_assistant', None) and self.ai_assistant.api_key:
             print("[VisionAnalyzer] Enviando fotografía del entorno a Gemini Vision para análisis...")
-            prompt = "Describe en 1 o 2 oraciones sencillas en español para una persona no vidente qué objetos, personas u obstáculos hay al frente en el camino."
+            prompt = (
+                "Describe con precisión y de forma útil para una persona no vidente qué hay al frente. "
+                "Indica personas, vehículos, muebles, puertas, escaleras, obstáculos y si están a la izquierda, centro o derecha. "
+                "Responde en español en máximo 2 oraciones claras."
+            )
             self.ai_assistant.consultar_gemini_vision_async(
                 ruta_foto, prompt, 
-                lambda respuesta: callback(f"Visión: {respuesta}" if respuesta else self._analizar_imagen_offline(ruta_foto))
+                lambda respuesta: callback(
+                    f"Visión: {respuesta}" if respuesta else self._respuesta_vision_respaldo(ruta_foto)
+                )
             )
         else:
             resultado_local = self._analizar_imagen_offline(ruta_foto)
             callback(resultado_local)
+
+    def _respuesta_vision_respaldo(self, ruta_foto):
+        resultado_local = self._analizar_imagen_offline(ruta_foto)
+        if resultado_local:
+            return resultado_local
+        return "Visión: La foto fue tomada, pero Gemini Vision no respondió. Intenta otra vez con mejor conexión."
 
     def _analizar_imagen_offline(self, ruta_imagen):
         """Ejecuta inferencia con YOLO TFLite y genera una descripción espacial en español."""
