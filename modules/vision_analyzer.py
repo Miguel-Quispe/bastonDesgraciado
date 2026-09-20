@@ -1,6 +1,7 @@
 import os
 import time
 from PIL import Image
+from kivy.clock import Clock
 
 # Diccionario de traducción de clases COCO (YOLO) a español natural para personas con discapacidad visual
 CLASES_COCO_ES = {
@@ -18,6 +19,10 @@ class VisionAnalyzer:
     def __init__(self, ruta_modelo="model/yolov8n.tflite"):
         self.camara_disponible = False
         self.interpreter = None
+        self._camara_android = None
+        self._surface_texture = None
+        self._picture_callback = None
+        self._autofocus_callback = None
         self.ruta_modelo = ruta_modelo if os.path.isabs(ruta_modelo) else os.path.join(os.getcwd(), ruta_modelo)
         
         self._inicializar_camara()
@@ -66,36 +71,219 @@ class VisionAnalyzer:
         self.ruta_foto_pendiente = self._obtener_ruta_foto()
 
         if self.camara_disponible:
-            try:
-                from jnius import autoclass
-                Intent = autoclass('android.content.Intent')
-                MediaStore = autoclass('android.provider.MediaStore')
-                File = autoclass('java.io.File')
-                Uri = autoclass('android.net.Uri')
-                StrictMode = autoclass('android.os.StrictMode')
-
-                # Desactivar restricciones de URI para pasar el archivo de fotos limpiamente
-                try:
-                    builder = autoclass('android.os.StrictMode$VmPolicy$Builder')()
-                    StrictMode.setVmPolicy(builder.build())
-                except Exception:
-                    pass
-
-                activity = self.PythonActivity.mActivity
-                intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-                
-                foto_file = File(self.ruta_foto_pendiente)
-                uri_foto = Uri.fromFile(foto_file)
-                intent.putExtra(MediaStore.EXTRA_OUTPUT, uri_foto)
-
-                activity.startActivityForResult(intent, 1002)
-                print(f"[VisionAnalyzer] Intent de cámara de entorno lanzado. Guardando en: {self.ruta_foto_pendiente}")
+            if self._capturar_foto_trasera_automatica():
+                print(f"[VisionAnalyzer] Captura automática con cámara trasera iniciada: {self.ruta_foto_pendiente}")
                 return
-            except Exception as e:
-                print(f"[VisionAnalyzer] Error al invocar cámara nativa: {e}")
+
+            if self._abrir_camara_android_intent():
+                return
 
         # Fallback para entorno de desarrollo PC
         self.procesar_foto_capturada()
+
+    def _seleccionar_camara_trasera(self, Camera, CameraInfo):
+        """Devuelve el id de la cámara trasera; si falla, usa la cámara 0."""
+        try:
+            total = Camera.getNumberOfCameras()
+            info = CameraInfo()
+            for camera_id in range(total):
+                Camera.getCameraInfo(camera_id, info)
+                if info.facing == CameraInfo.CAMERA_FACING_BACK:
+                    return camera_id
+        except Exception as e:
+            print(f"[VisionAnalyzer] No se pudo seleccionar cámara trasera: {e}")
+        return 0
+
+    def _liberar_camara_android(self):
+        try:
+            if self._camara_android:
+                try:
+                    self._camara_android.stopPreview()
+                except Exception:
+                    pass
+                self._camara_android.release()
+        except Exception as e:
+            print(f"[VisionAnalyzer] Error liberando cámara: {e}")
+        finally:
+            self._camara_android = None
+            self._surface_texture = None
+            self._picture_callback = None
+            self._autofocus_callback = None
+
+    def _capturar_foto_trasera_automatica(self):
+        """Toma una foto sin interacción usando la cámara trasera nativa de Android."""
+        try:
+            from jnius import autoclass, PythonJavaClass, java_method
+
+            Camera = autoclass('android.hardware.Camera')
+            CameraInfo = autoclass('android.hardware.Camera$CameraInfo')
+            SurfaceTexture = autoclass('android.graphics.SurfaceTexture')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
+            class Runnable(PythonJavaClass):
+                __javainterfaces__ = ['java/lang/Runnable']
+
+                def __init__(self, func):
+                    super().__init__()
+                    self.func = func
+
+                @java_method('()V')
+                def run(self):
+                    self.func()
+
+            class PictureCallback(PythonJavaClass):
+                __javainterfaces__ = ['android/hardware/Camera$PictureCallback']
+
+                def __init__(self, analyzer):
+                    super().__init__()
+                    self.analyzer = analyzer
+
+                @java_method('([BLandroid/hardware/Camera;)V')
+                def onPictureTaken(self, data, camera):
+                    try:
+                        ruta = self.analyzer.ruta_foto_pendiente
+                        carpeta = os.path.dirname(ruta)
+                        if carpeta:
+                            os.makedirs(carpeta, exist_ok=True)
+                        with open(ruta, "wb") as f:
+                            f.write(bytes(data))
+                        print(f"[VisionAnalyzer] Foto trasera automática guardada: {ruta}")
+                    except Exception as e:
+                        print(f"[VisionAnalyzer] Error guardando foto automática: {e}")
+                    finally:
+                        self.analyzer._liberar_camara_android()
+                        Clock.schedule_once(lambda dt: self.analyzer.procesar_foto_capturada(), 0)
+
+            class AutoFocusCallback(PythonJavaClass):
+                __javainterfaces__ = ['android/hardware/Camera$AutoFocusCallback']
+
+                def __init__(self, analyzer):
+                    super().__init__()
+                    self.analyzer = analyzer
+
+                @java_method('(ZLandroid/hardware/Camera;)V')
+                def onAutoFocus(self, success, camera):
+                    self.analyzer._tomar_foto_android()
+
+            def iniciar():
+                try:
+                    camera_id = self._seleccionar_camara_trasera(Camera, CameraInfo)
+                    self._camara_android = Camera.open(camera_id)
+                    params = self._camara_android.getParameters()
+                    try:
+                        modos = params.getSupportedFocusModes()
+                        if modos and modos.contains("continuous-picture"):
+                            params.setFocusMode("continuous-picture")
+                        elif modos and modos.contains("auto"):
+                            params.setFocusMode("auto")
+                    except Exception:
+                        pass
+                    try:
+                        params.setJpegQuality(85)
+                    except Exception:
+                        pass
+                    self._camara_android.setParameters(params)
+                    self._surface_texture = SurfaceTexture(10)
+                    self._camara_android.setPreviewTexture(self._surface_texture)
+                    self._camara_android.startPreview()
+                    self._picture_callback = PictureCallback(self)
+                    self._autofocus_callback = AutoFocusCallback(self)
+                    Clock.schedule_once(lambda dt: self._enfocar_y_tomar_foto_android(), 0.9)
+                except Exception as e:
+                    print(f"[VisionAnalyzer] Captura automática trasera no disponible: {e}")
+                    self._liberar_camara_android()
+                    Clock.schedule_once(lambda dt: self._abrir_camara_android_intent(), 0)
+
+            PythonActivity.mActivity.runOnUiThread(Runnable(iniciar))
+            return True
+        except Exception as e:
+            print(f"[VisionAnalyzer] No se pudo preparar captura automática: {e}")
+            return False
+
+    def _ejecutar_en_hilo_ui_android(self, func):
+        from jnius import autoclass, PythonJavaClass, java_method
+
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
+        class Runnable(PythonJavaClass):
+            __javainterfaces__ = ['java/lang/Runnable']
+
+            def __init__(self, callback):
+                super().__init__()
+                self.callback = callback
+
+            @java_method('()V')
+            def run(self):
+                self.callback()
+
+        PythonActivity.mActivity.runOnUiThread(Runnable(func))
+
+    def _enfocar_y_tomar_foto_android(self):
+        try:
+            if not self._camara_android:
+                return
+
+            def accion():
+                try:
+                    self._camara_android.autoFocus(self._autofocus_callback)
+                except Exception:
+                    self._tomar_foto_android()
+
+            self._ejecutar_en_hilo_ui_android(accion)
+        except Exception as e:
+            print(f"[VisionAnalyzer] Error enfocando cámara: {e}")
+            self._liberar_camara_android()
+            self._abrir_camara_android_intent()
+
+    def _tomar_foto_android(self):
+        try:
+            def accion():
+                try:
+                    if self._camara_android and self._picture_callback:
+                        self._camara_android.takePicture(None, None, self._picture_callback)
+                except Exception as e:
+                    print(f"[VisionAnalyzer] Error tomando foto automática: {e}")
+                    self._liberar_camara_android()
+                    self._abrir_camara_android_intent()
+
+            self._ejecutar_en_hilo_ui_android(accion)
+        except Exception as e:
+            print(f"[VisionAnalyzer] Error tomando foto automática: {e}")
+            self._liberar_camara_android()
+            self._abrir_camara_android_intent()
+
+    def _abrir_camara_android_intent(self):
+        """Respaldo: abre la app de cámara pidiendo cámara trasera si es posible."""
+        try:
+            from jnius import autoclass
+            Intent = autoclass('android.content.Intent')
+            MediaStore = autoclass('android.provider.MediaStore')
+            File = autoclass('java.io.File')
+            Uri = autoclass('android.net.Uri')
+            StrictMode = autoclass('android.os.StrictMode')
+
+            try:
+                builder = autoclass('android.os.StrictMode$VmPolicy$Builder')()
+                StrictMode.setVmPolicy(builder.build())
+            except Exception:
+                pass
+
+            activity = self.PythonActivity.mActivity
+            intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+            intent.putExtra("android.intent.extras.CAMERA_FACING", 0)
+            intent.putExtra("android.intent.extras.LENS_FACING_BACK", 1)
+            intent.putExtra("android.intent.extra.USE_FRONT_CAMERA", False)
+
+            foto_file = File(self.ruta_foto_pendiente)
+            uri_foto = Uri.fromFile(foto_file)
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, uri_foto)
+
+            activity.startActivityForResult(intent, 1002)
+            print(f"[VisionAnalyzer] Intent de cámara trasera lanzado. Guardando en: {self.ruta_foto_pendiente}")
+            return True
+        except Exception as e:
+            print(f"[VisionAnalyzer] Error al invocar cámara nativa: {e}")
+            return False
 
     def _obtener_ruta_foto(self):
         """Genera una ruta persistente para guardar la foto capturada."""
@@ -135,7 +323,7 @@ class VisionAnalyzer:
     def _analizar_imagen_offline(self, ruta_imagen):
         """Ejecuta inferencia con YOLO TFLite y genera una descripción espacial en español."""
         if not os.path.exists(ruta_imagen) and not self.interpreter:
-            return "Visión: Camino despejado al frente. No se detectan obstáculos inmediatos."
+            return "Visión: No pude capturar una foto del frente. Revisa el permiso de cámara e intenta otra vez."
 
         try:
             # Si el intérprete TFLite está activo, procesamos la imagen
