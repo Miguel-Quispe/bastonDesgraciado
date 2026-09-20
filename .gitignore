@@ -16,6 +16,9 @@ bin/
 model/
 *.tflite
 vosk_model_es.zip
-config_gemini.json
 config_asistente.json
+config_gemini.json
 
+# Archivos sensibles / claves locales
+*.key
+*.secret
