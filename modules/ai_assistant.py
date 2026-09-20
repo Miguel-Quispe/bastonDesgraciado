@@ -114,7 +114,7 @@ class AIAssistant:
         if not key:
             return "Puedo decirte la hora, la fecha, tu ubicación, leer documentos o consultar tu agenda. Guarda tu clave API de Gemini desplegando el panel de configuración."
 
-        modelos = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-flash-latest"]
+        modelos = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-1.5-flash"]
         
         prompt_sistema = (
             "Eres el asistente de voz de un bastón inteligente para personas no videntes. "
