@@ -456,7 +456,7 @@ class BastonApp(App):
             if self.ai.tiene_api_key_configurada():
                 self.voz.hablar("La clave API de Gemini ya está configurada.")
             else:
-                self.voz.hablar("Abriendo configuración. Pega una clave API de Gemini válida que empiece con AIza.")
+                self.voz.hablar("Abriendo configuración. Pega una clave API válida de Google AI Studio.")
             if self.panel_api.opacity == 0:
                 self.al_toggle_panel_api(None)
             return

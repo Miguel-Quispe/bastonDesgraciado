@@ -63,7 +63,7 @@ class AIAssistant:
     def es_api_key_gemini_valida(self, api_key):
         """Validación local básica para evitar guardar claves de otro servicio."""
         key = self.limpiar_api_key(api_key)
-        return key.startswith("AIza") and len(key) >= 30
+        return (key.startswith("AIza") or key.startswith("AQ.")) and len(key) >= 30
 
     def _leer_api_key_desde_archivo(self, ruta):
         try:
@@ -110,7 +110,7 @@ class AIAssistant:
         self.ultimo_error_config = ""
 
         if not self.es_api_key_gemini_valida(key_limpia):
-            self.ultimo_error_config = "La clave no parece ser de Gemini. Debe comenzar con AIza."
+            self.ultimo_error_config = "La clave no parece ser de Gemini. Debe comenzar con AIza o AQ."
             print(f"[AIAssistant] {self.ultimo_error_config}")
             return False
 
@@ -174,9 +174,9 @@ class AIAssistant:
         """Realiza la petición HTTP REST a Gemini Flash con modelos de respaldo."""
         key = self.api_key or self._cargar_api_key()
         if not key:
-            return "La clave API de Gemini no está configurada. Abre configurar clave API y pega una clave válida que empiece con AIza."
+            return "La clave API de Gemini no está configurada. Abre configurar clave API y pega una clave válida de Google AI Studio."
         if not self.es_api_key_gemini_valida(key):
-            return "La clave guardada no parece ser de Gemini. Borra esa clave y pega una clave válida que empiece con AIza."
+            return "La clave guardada no parece ser de Gemini. Borra esa clave y pega una clave válida de Google AI Studio."
 
         modelos = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-1.5-flash"]
         
@@ -217,7 +217,7 @@ class AIAssistant:
                 print(f"[AIAssistant] Error consultando {model}: {e}")
                 continue
 
-        return "No se pudo conectar con la IA de Gemini. Verifica que tu clave API sea válida (comienza por AIza) y tengas conexión a internet."
+        return "No se pudo conectar con la IA de Gemini. Verifica que tu clave API de Google AI Studio sea válida y tengas conexión a internet."
 
     def consultar_gemini_vision_async(self, ruta_imagen, prompt_instruccion, callback_respuesta):
         """Analiza una fotografía utilizando la API de Gemini Vision en un hilo secundario."""
