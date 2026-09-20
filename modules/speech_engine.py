@@ -89,16 +89,40 @@ class SpeechEngine:
         self.hablar(f"Entendido. A partir de ahora responderé al nombre de {self.nombre_asistente.capitalize()}.")
 
     def _inicializar_android(self):
+
         try:
-            from jnius import autoclass
+            from jnius import autoclass, PythonJavaClass, java_method
             self.TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
             self.PythonActivity = autoclass('org.kivy.android.PythonActivity')
             self.activity = self.PythonActivity.mActivity
-            self.tts = self.TextToSpeech(self.activity, None)
-            print("[SpeechEngine] Motor TTS de Android inicializado correctamente.")
+            self.tts_listo = False
+
+            class TTSInitListener(PythonJavaClass):
+                __javainterfaces__ = ['android/speech/tts/TextToSpeech$OnInitListener']
+                def __init__(self, engine):
+                    super().__init__()
+                    self.engine = engine
+
+                @java_method('(I)V')
+                def onInit(self, status):
+                    if status == 0:  # TextToSpeech.SUCCESS = 0
+                        print("[SpeechEngine Android] TextToSpeech inicializado con ÉXITO en Android.")
+                        self.engine.tts_listo = True
+                        try:
+                            Locale = autoclass('java.util.Locale')
+                            self.engine.tts.setLanguage(Locale("es", "ES"))
+                        except Exception as e:
+                            print(f"[SpeechEngine Android] Error al establecer idioma es-ES: {e}")
+                    else:
+                        print(f"[SpeechEngine Android] TextToSpeech falló al inicializar (status={status}).")
+
+            self.tts_listener = TTSInitListener(self)
+            self.tts = self.TextToSpeech(self.activity, self.tts_listener)
+            print("[SpeechEngine] Motor TTS de Android instanciado. Esperando onInit...")
         except Exception as e:
-            print(f"[SpeechEngine] TTS de Android no activo. Se usará motor PC dedicado.")
+            print(f"[SpeechEngine] TTS de Android no activo ({e}). Se usará motor PC dedicado.")
             self.tts = None
+            self.tts_listo = False
 
     def _loop_tts_pc(self):
         """Hilo único dedicado para voz en PC con SAPI.SpVoice nativo de Windows, pyttsx3 y PowerShell."""
@@ -160,8 +184,6 @@ class SpeechEngine:
                 print(f"[SpeechEngine] Error al reproducir audio TTS en PC: {e}")
                 self.reproduciendo_tts = False
 
-
-
     def _inicializar_vosk(self):
         """Inicializa el modelo de Vosk si la carpeta existe en PC/desarrollo."""
         try:
@@ -176,21 +198,41 @@ class SpeechEngine:
         except Exception as e:
             print(f"[SpeechEngine] Vosk no disponible: {e}")
 
-    def hablar(self, texto, reintentos=2):
-        """Convierte texto a voz mediante el motor nativo de Android o pyttsx3 en PC."""
+    def hablar(self, texto, reintentos=3):
+        """Convierte texto a voz mediante el motor nativo de Android o SAPI5/pyttsx3 en PC."""
         print(f"[TTS Audio Output]: {texto}")
         if self.tts:
+            if not getattr(self, 'tts_listo', False) and reintentos > 0:
+                print(f"[SpeechEngine Android] Esperando inicialización de TTS nativo... Reintentando en 0.6s ({reintentos})")
+                Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.6)
+                return
+
             try:
                 from jnius import autoclass
                 Locale = autoclass('java.util.Locale')
-                self.tts.setLanguage(Locale("es", "ES"))
-                res = self.tts.speak(texto, 0, None, None)
+                try:
+                    self.tts.setLanguage(Locale("es", "ES"))
+                except Exception:
+                    pass
+
+                # En Android, QUEUE_FLUSH = 0
+                res = -1
+                try:
+                    res = self.tts.speak(texto, 0, None, "baston_tts")
+                except Exception:
+                    try:
+                        res = self.tts.speak(texto, 0, None)
+                    except Exception as e2:
+                        print(f"[SpeechEngine Android] Error en speak legacy: {e2}")
+
                 if res != 0 and reintentos > 0:
-                    Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.8)
+                    print(f"[SpeechEngine Android] speak devolvió código {res}. Reintentando en 0.6s...")
+                    Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.6)
             except Exception as e:
-                print(f"[SpeechEngine] Error al reproducir TTS Android: {e}")
+                print(f"[SpeechEngine Android] Error al reproducir TTS: {e}")
         else:
             self._cola_tts.put(texto)
+
 
 
     def estan_auriculares_conectados(self):
@@ -315,9 +357,12 @@ class SpeechEngine:
 
                 @java_method('(I)V')
                 def onError(self, error):
-                    print(f"[SpeechRecognizer Android] Error ({error}). Reanudando...")
-                    if self.engine.escuchando:
-                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 1.2)
+                    # Error 6 = ERROR_SPEECH_TIMEOUT, 7 = ERROR_NO_MATCH
+                    print(f"[SpeechRecognizer Android] Aviso estado micrófono ({error}).")
+                    if self.engine.escuchando and not getattr(self.engine, 'reproduciendo_tts', False):
+                        # Evitar bucle de parpadeo/reinicio constante del micrófono usando retardo prudente
+                        retardo = 2.5 if error in [6, 7] else 3.5
+                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), retardo)
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onResults(self, results):
@@ -330,8 +375,8 @@ class SpeechEngine:
                     except Exception as e:
                         print(f"[SpeechRecognizer Error Resultados]: {e}")
                     
-                    if self.engine.escuchando:
-                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 0.5)
+                    if self.engine.escuchando and not getattr(self.engine, 'reproduciendo_tts', False):
+                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 1.5)
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onPartialResults(self, partialResults):
@@ -369,26 +414,42 @@ class SpeechEngine:
             print(f"[SpeechEngine Android Listener Error]: {e}")
 
     def _reiniciar_escucha_android(self):
-        if self.escuchando and hasattr(self, 'speech_rec') and self.speech_rec and hasattr(self, 'intent_escucha'):
-            try:
-                from jnius import autoclass, PythonJavaClass, java_method
-                PythonActivity = autoclass('org.kivy.android.PythonActivity')
-                class Runnable(PythonJavaClass):
-                    __javainterfaces__ = ['java/lang/Runnable']
-                    def __init__(self, func):
-                        super().__init__()
-                        self.func = func
-                    @java_method('()V')
-                    def run(self):
-                        self.func()
-                def reanudar():
-                    try:
+        """Reanuda la escucha del micrófono en Android de forma controlada y antirrebote."""
+        if not self.escuchando or getattr(self, 'reproduciendo_tts', False):
+            return
+
+        if getattr(self, '_reiniciando_mic', False):
+            return
+
+        self._reiniciando_mic = True
+
+        try:
+            from jnius import autoclass, PythonJavaClass, java_method
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            
+            class Runnable(PythonJavaClass):
+                __javainterfaces__ = ['java/lang/Runnable']
+                def __init__(self, func):
+                    super().__init__()
+                    self.func = func
+                @java_method('()V')
+                def run(self):
+                    self.func()
+            
+            def reanudar():
+                try:
+                    if hasattr(self, 'speech_rec') and self.speech_rec and hasattr(self, 'intent_escucha'):
                         self.speech_rec.startListening(self.intent_escucha)
-                    except Exception:
-                        pass
-                PythonActivity.mActivity.runOnUiThread(Runnable(reanudar))
-            except Exception as e:
-                print(f"[SpeechEngine Android Error Reanudar]: {e}")
+                except Exception:
+                    pass
+                finally:
+                    self._reiniciando_mic = False
+
+            PythonActivity.mActivity.runOnUiThread(Runnable(reanudar))
+        except Exception as e:
+            print(f"[SpeechEngine Android Error Reanudar]: {e}")
+            self._reiniciando_mic = False
+
 
     def _grabar_audio_desktop(self, callback_comando, callback_parcial):
         try:
