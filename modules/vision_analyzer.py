@@ -1,5 +1,6 @@
 import os
 import time
+import threading
 from PIL import Image
 from kivy.clock import Clock
 
@@ -25,6 +26,14 @@ class VisionAnalyzer:
         self._autofocus_callback = None
         self._captura_en_progreso = False
         self._esperando_resultado_intent = False
+        self._camara_gesto = None
+        self._preview_gesto = None
+        self._detector_gesto = None
+        self._gesto_activo = False
+        self._procesando_cuadro_gesto = False
+        self._ultimo_cuadro_gesto = 0.0
+        self._palmas_consecutivas = 0
+        self._callback_gesto = None
         self.ruta_modelo = ruta_modelo if os.path.isabs(ruta_modelo) else os.path.join(os.getcwd(), ruta_modelo)
         
         self._inicializar_camara()
@@ -63,6 +72,131 @@ class VisionAnalyzer:
                 print(f"[VisionAnalyzer] Error al inicializar TFLite: {e}. Usando procesamiento heurístico.")
         else:
             print(f"[VisionAnalyzer] Aviso: Modelo '{self.ruta_modelo}' no encontrado. Se usará análisis de respaldo.")
+
+    def iniciar_detector_gesto(self, callback_gesto):
+        """Observa la cámara trasera y activa un comando solo ante una palma abierta local."""
+        if self._gesto_activo or not self.camara_disponible:
+            return False
+        if not self._tiene_permiso_camara_android():
+            print("[VisionAnalyzer] Detector de gesto sin permiso de cámara.")
+            return False
+
+        try:
+            from jnius import autoclass, PythonJavaClass, java_method
+            Camera = autoclass('android.hardware.Camera')
+            CameraInfo = autoclass('android.hardware.Camera$CameraInfo')
+            SurfaceTexture = autoclass('android.graphics.SurfaceTexture')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            Detector = autoclass('org.baston.bastonapp.HandSignalDetector')
+
+            class Runnable(PythonJavaClass):
+                __javainterfaces__ = ['java/lang/Runnable']
+
+                def __init__(self, funcion):
+                    super().__init__()
+                    self.funcion = funcion
+
+                @java_method('()V')
+                def run(self):
+                    self.funcion()
+
+            class PreviewCallback(PythonJavaClass):
+                __javainterfaces__ = ['android/hardware/Camera$PreviewCallback']
+
+                def __init__(self, analyzer):
+                    super().__init__()
+                    self.analyzer = analyzer
+
+                @java_method('([BLandroid/hardware/Camera;)V')
+                def onPreviewFrame(self, data, camera):
+                    self.analyzer._recibir_cuadro_gesto(data)
+
+            def iniciar():
+                try:
+                    self._detector_gesto = Detector(PythonActivity.mActivity)
+                    camera_id = self._seleccionar_camara_trasera(Camera, CameraInfo)
+                    self._camara_gesto = Camera.open(camera_id)
+                    params = self._camara_gesto.getParameters()
+                    try:
+                        params.setPreviewSize(640, 480)
+                    except Exception:
+                        pass
+                    self._camara_gesto.setParameters(params)
+                    tamanio = self._camara_gesto.getParameters().getPreviewSize()
+                    self._gesto_ancho = tamanio.width
+                    self._gesto_alto = tamanio.height
+                    self._surface_gesto = SurfaceTexture(11)
+                    self._preview_gesto = PreviewCallback(self)
+                    self._camara_gesto.setPreviewTexture(self._surface_gesto)
+                    self._camara_gesto.setPreviewCallback(self._preview_gesto)
+                    self._camara_gesto.startPreview()
+                    self._callback_gesto = callback_gesto
+                    self._gesto_activo = True
+                    print("[VisionAnalyzer] Detector local de palma abierto con cámara trasera.")
+                except Exception as error:
+                    print(f"[VisionAnalyzer] No se pudo iniciar detector de gesto: {error}")
+                    self.detener_detector_gesto()
+
+            PythonActivity.mActivity.runOnUiThread(Runnable(iniciar))
+            return True
+        except Exception as error:
+            print(f"[VisionAnalyzer] Detector local de gesto no disponible: {error}")
+            return False
+
+    def _recibir_cuadro_gesto(self, data):
+        ahora = time.monotonic()
+        if (not self._gesto_activo or self._procesando_cuadro_gesto or
+                ahora - self._ultimo_cuadro_gesto < 0.55):
+            return
+        self._ultimo_cuadro_gesto = ahora
+        self._procesando_cuadro_gesto = True
+        try:
+            cuadro = bytes(data)
+        except Exception:
+            self._procesando_cuadro_gesto = False
+            return
+        threading.Thread(target=self._analizar_cuadro_gesto, args=(cuadro,), daemon=True).start()
+
+    def _analizar_cuadro_gesto(self, cuadro):
+        try:
+            palma_abierta = bool(self._detector_gesto.isOpenPalmNv21(
+                cuadro, self._gesto_ancho, self._gesto_alto
+            ))
+            self._palmas_consecutivas = self._palmas_consecutivas + 1 if palma_abierta else 0
+            if self._palmas_consecutivas >= 2:
+                self._palmas_consecutivas = 0
+                Clock.schedule_once(lambda dt: self._activar_por_gesto(), 0)
+        except Exception as error:
+            print(f"[VisionAnalyzer] Error analizando gesto local: {error}")
+        finally:
+            self._procesando_cuadro_gesto = False
+
+    def _activar_por_gesto(self):
+        if not self._gesto_activo:
+            return
+        callback = self._callback_gesto
+        self.detener_detector_gesto()
+        if callback:
+            callback()
+
+    def detener_detector_gesto(self):
+        """Libera la cámara de vigilancia para usarla en foto o para ahorrar batería."""
+        self._gesto_activo = False
+        self._palmas_consecutivas = 0
+        try:
+            if self._camara_gesto:
+                try:
+                    self._camara_gesto.setPreviewCallback(None)
+                    self._camara_gesto.stopPreview()
+                except Exception:
+                    pass
+                self._camara_gesto.release()
+        except Exception as error:
+            print(f"[VisionAnalyzer] Error cerrando detector de gesto: {error}")
+        finally:
+            self._camara_gesto = None
+            self._preview_gesto = None
+            self._surface_gesto = None
 
     def capturar_y_analizar(self, callback_resultado, ai_assistant=None):
         """Captura una fotografía del entorno y analiza obstáculos y objetos presentes."""

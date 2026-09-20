@@ -32,6 +32,10 @@ class SpeechEngine:
         self._evento_reinicio_mic = None # Referencia al Clock.schedule_once pendiente (para cancelarlo)
         self._errores_mic_consecutivos = 0
         self._ultimo_texto_parcial = ""
+        self._bloqueo_eco_hasta = 0.0
+        self._ignorar_errores_hasta = 0.0
+        self._escucha_una_vez = False
+        self._callback_fin_escucha_una_vez = None
 
         # Cola y Hilo dedicado para síntesis de voz en PC (evita cierres o cuelgues SAPI5)
         self._cola_tts = queue.Queue()
@@ -215,6 +219,10 @@ class SpeechEngine:
             # ANTI-ECO: Detener el micrófono ANTES de reproducir audio para evitar que el SpeechRecognizer
             # capture la voz del propio asistente y genere un bucle.
             self.reproduciendo_tts = True
+            # isSpeaking() puede informar False unas milésimas antes de que el audio salga por el parlante.
+            # Este margen conserva el micrófono cerrado hasta que el eco ya no sea reconocible.
+            duracion_estimada = max(2.0, len(str(texto)) / 11.0 + 1.5)
+            self._bloqueo_eco_hasta = max(self._bloqueo_eco_hasta, time.monotonic() + duracion_estimada)
             self._detener_speech_recognizer_android()
 
             try:
@@ -260,7 +268,7 @@ class SpeechEngine:
             if hablando and contador_max > 0:
                 Clock.schedule_once(lambda dt: self._esperar_fin_tts_android(contador_max - 1), 0.3)
             else:
-                # Locución finalizada: esperar 0.5s para disipar eco y reactivar micrófono
+                # Locución finalizada: _reiniciar_escucha_android respeta el margen anti-eco calculado.
                 print("[SpeechEngine Android] Locución finalizada.")
                 def reactivar_mic(dt):
                     self.reproduciendo_tts = False
@@ -274,6 +282,13 @@ class SpeechEngine:
     def _detener_speech_recognizer_android(self):
         """Detiene el SpeechRecognizer de Android para evitar que el micrófono capture el audio del TTS."""
         try:
+            self._ignorar_errores_hasta = time.monotonic() + 1.0
+            if self._evento_reinicio_mic is not None:
+                try:
+                    self._evento_reinicio_mic.cancel()
+                except Exception:
+                    pass
+                self._evento_reinicio_mic = None
             if not hasattr(self, 'speech_rec') or not self.speech_rec:
                 return
             from jnius import autoclass, PythonJavaClass, java_method
@@ -290,7 +305,8 @@ class SpeechEngine:
 
             def parar():
                 try:
-                    self.speech_rec.stopListening()
+                    # cancel evita el tono de fin de dictado que algunos servicios de voz emiten con stopListening.
+                    self.speech_rec.cancel()
                 except Exception as ex:
                     print(f"[SpeechEngine] stopListening error: {ex}")
 
@@ -335,6 +351,31 @@ class SpeechEngine:
         """Detiene el hilo de escucha continua."""
         self.escuchando = False
         print("[SpeechEngine] Escucha continua detenida.")
+
+    def escuchar_una_vez(self, callback_comando, callback_finalizar=None):
+        """Abre el micrófono una sola vez, activado por la señal local de mano."""
+        if self.escuchando or self.reproduciendo_tts:
+            return False
+        self._escucha_una_vez = True
+        self._callback_fin_escucha_una_vez = callback_finalizar
+        self.escuchando = True
+        if self.activity:
+            self._iniciar_reconocimiento_nativo_android(callback_comando)
+        else:
+            # En PC se conserva el flujo habitual de desarrollo.
+            self._escucha_una_vez = False
+            self.iniciar_escucha_continua(callback_comando)
+        return True
+
+    def _finalizar_escucha_una_vez(self):
+        if not self._escucha_una_vez:
+            return
+        self.escuchando = False
+        self._escucha_una_vez = False
+        callback = self._callback_fin_escucha_una_vez
+        self._callback_fin_escucha_una_vez = None
+        if callback:
+            Clock.schedule_once(lambda dt: callback(), 0)
 
     def _loop_escucha_continua(self, callback_comando, callback_parcial):
         """Usa SpeechRecognizer nativo en Android o PyAudio/Vosk + Consola en PC."""
@@ -383,6 +424,14 @@ class SpeechEngine:
                 Clock.schedule_once(
                     lambda dt: self._iniciar_reconocimiento_nativo_android(callback_comando, callback_parcial),
                     0.6
+                )
+                return
+
+            espera_eco = self._bloqueo_eco_hasta - time.monotonic()
+            if espera_eco > 0:
+                Clock.schedule_once(
+                    lambda dt: self._iniciar_reconocimiento_nativo_android(callback_comando, callback_parcial),
+                    espera_eco
                 )
                 return
 
@@ -443,8 +492,15 @@ class SpeechEngine:
                     """
                     print(f"[SpeechRecognizer] Evento micrófono código {error}.")
 
+                    if time.monotonic() < getattr(self.engine, '_ignorar_errores_hasta', 0):
+                        return
+
                     if not self.engine.escuchando or getattr(self.engine, 'reproduciendo_tts', False):
                         return  # No reiniciar si el TTS está hablando
+
+                    if self.engine._escucha_una_vez:
+                        self.engine._finalizar_escucha_una_vez()
+                        return
 
                     if error == 9:
                         self.engine.escuchando = False
@@ -493,6 +549,10 @@ class SpeechEngine:
                     except Exception as e:
                         print(f"[SpeechRecognizer Error Resultados]: {e}")
                     
+                    if self.engine._escucha_una_vez:
+                        self.engine._finalizar_escucha_una_vez()
+                        return
+
                     # Reinicio rápido tras procesar el resultado de voz
                     if self.engine.escuchando and not getattr(self.engine, 'reproduciendo_tts', False):
                         if self.engine._evento_reinicio_mic is not None:
@@ -501,7 +561,7 @@ class SpeechEngine:
                             except Exception:
                                 pass
                         self.engine._evento_reinicio_mic = Clock.schedule_once(
-                            lambda dt: self.engine._reiniciar_escucha_android(), 0.8
+                            lambda dt: self.engine._reiniciar_escucha_android(), 1.6
                         )
 
                 @java_method('(Landroid/os/Bundle;)V')
@@ -560,12 +620,20 @@ class SpeechEngine:
             print("[SpeechEngine] Reinicio del mic cancelado: TTS activo o escucha detenida.")
             return
 
+        espera_eco = self._bloqueo_eco_hasta - time.monotonic()
+        if espera_eco > 0:
+            print(f"[SpeechEngine] Esperando {espera_eco:.1f}s para evitar eco del asistente.")
+            self._evento_reinicio_mic = Clock.schedule_once(
+                lambda dt: self._reiniciar_escucha_android(), espera_eco
+            )
+            return
+
         if getattr(self, '_reiniciando_mic', False):
             print("[SpeechEngine] Reinicio del mic ignorado: ya hay uno en curso.")
             return
 
-        # Android no soporta una sesión infinita real; este margen evita RECOGNIZER_BUSY.
-        MIN_INTERVALO_REINICIO = 1.2
+        # Android no soporta una sesión infinita real. Un intervalo mayor evita pitidos y RECOGNIZER_BUSY.
+        MIN_INTERVALO_REINICIO = 2.0
         ahora = time.time()
         tiempo_transcurrido = ahora - getattr(self, '_ultimo_reinicio_mic', 0)
         if tiempo_transcurrido < MIN_INTERVALO_REINICIO:
@@ -600,17 +668,14 @@ class SpeechEngine:
                             self.speech_rec.cancel()
                         except Exception:
                             pass
-                        try:
-                            self.speech_rec.destroy()
-                        except Exception:
-                            pass
-                        self.speech_rec = None
 
                     if hasattr(self, 'intent_escucha') and hasattr(self, 'escuchador_listener'):
-                        self.speech_rec = SpeechRecognizer.createSpeechRecognizer(PythonActivity.mActivity)
-                        self.speech_rec.setRecognitionListener(self.escuchador_listener)
+                        # Reutilizar el objeto evita que Android anuncie repetidamente conexión/desconexión del micrófono.
+                        if not self.speech_rec:
+                            self.speech_rec = SpeechRecognizer.createSpeechRecognizer(PythonActivity.mActivity)
+                            self.speech_rec.setRecognitionListener(self.escuchador_listener)
                         self.speech_rec.startListening(self.intent_escucha)
-                        print("[SpeechEngine] Micrófono recreado y reiniciado correctamente.")
+                        print("[SpeechEngine] Micrófono reiniciado sin recrear la sesión.")
                 except Exception as ex:
                     print(f"[SpeechEngine] startListening error: {ex}")
                 finally:

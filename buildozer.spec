@@ -12,7 +12,7 @@ package.domain = org.baston
 source.dir = .
 
 # (list) Source files to include (let empty to include all the files)
-source.include_exts = py,png,jpg,kv,atlas,json,txt,model,bin,pb,tflite,onnx
+source.include_exts = py,png,jpg,kv,atlas,json,txt,model,bin,pb,tflite,onnx,task
 
 # (list) List of directory to exclude (let empty to not exclude anything)
 source.exclude_dirs = tests,bin,.venv,.git,.github
@@ -21,10 +21,14 @@ source.exclude_dirs = tests,bin,.venv,.git,.github
 source.exclude_patterns = config_gemini.json,config_asistente.json,agenda_personal.json
 
 # (str) Application versioning (method 1)
-version = 0.5
+version = 0.6
 
 # (list) Application requirements
 requirements = python3,kivy,requests,pyjnius,pillow,qrcode
+
+# Detector local de palma abierta para activar una única escucha sin internet.
+android.add_src = android_src
+android.gradle_dependencies = com.google.mediapipe:tasks-vision:0.10.14
 
 # (str) Supported orientation (one of landscape, sensorLandscape, portrait or all)
 orientation = portrait
@@ -33,7 +37,7 @@ orientation = portrait
 fullscreen = 1
 
 # (list) Permissions
-android.permissions = BLUETOOTH,BLUETOOTH_ADMIN,BLUETOOTH_CONNECT,BLUETOOTH_SCAN,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,ACCESS_NETWORK_STATE,RECORD_AUDIO,INTERNET,CAMERA,VIBRATE
+android.permissions = BLUETOOTH,BLUETOOTH_ADMIN,BLUETOOTH_CONNECT,BLUETOOTH_SCAN,ACCESS_FINE_LOCATION,ACCESS_COARSE_LOCATION,ACCESS_NETWORK_STATE,RECORD_AUDIO,INTERNET,CAMERA,VIBRATE,WAKE_LOCK
 
 # (int) Target Android API, should be as high as possible.
 android.api = 33

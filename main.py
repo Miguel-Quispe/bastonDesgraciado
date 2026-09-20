@@ -37,6 +37,7 @@ class BastonApp(App):
         self.lector = DocumentReader()
         self.ai = AIAssistant()
         self.evento_navegacion = None
+        self._wake_lock = None
 
         self.layout = BoxLayout(
             orientation='vertical',
@@ -230,11 +231,8 @@ class BastonApp(App):
                     self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes para usar comandos de voz.")
                     return
 
-                # Iniciar la escucha solo después de tener permiso. El motor esperará si aún habla el TTS.
-                Clock.schedule_once(lambda dt: self.voz.iniciar_escucha_continua(
-                    callback_comando=self.procesar_comando_texto,
-                    callback_parcial=self.al_recibir_parcial
-                ), 1.0)
+                # La cámara trasera detecta una palma abierta localmente y recién entonces abre el micrófono.
+                Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
             request_permissions(permisos, callback_permisos)
         except Exception as e:
@@ -257,6 +255,7 @@ class BastonApp(App):
         """Inicia los servicios automáticos y emite aviso táctil y auditivo para personas no videntes."""
         self.solicitar_permisos_android()
         self.emitir_vibracion_bienvenida()
+        self.mantener_activa_con_pantalla_apagada()
 
         try:
             from android import activity
@@ -286,6 +285,38 @@ class BastonApp(App):
                 )
             except Exception as e:
                 print(f"[BastonApp] Error iniciando escucha continua: {e}")
+
+    def iniciar_control_por_gesto(self):
+        if not self.voz.activity:
+            return
+        iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
+        if iniciado:
+            self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
+        else:
+            self.lbl_estado.text = "No se pudo iniciar la cámara para gestos. Usa el botón para dar un comando."
+
+    def activar_comando_por_gesto(self):
+        """La palma abierta habilita una única escucha, sin micrófono permanente."""
+        self.lbl_estado.text = "Gesto detectado. Di tu comando."
+        self.emitir_vibracion_bienvenida()
+        if not self.voz.escuchar_una_vez(self.procesar_comando_texto, self.iniciar_control_por_gesto):
+            Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
+
+    def mantener_activa_con_pantalla_apagada(self):
+        """Mantiene el procesador activo para voz y Bluetooth aunque se apague la pantalla."""
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            Context = autoclass('android.content.Context')
+            PowerManager = autoclass('android.os.PowerManager')
+            activity = PythonActivity.mActivity
+            power_manager = activity.getSystemService(Context.POWER_SERVICE)
+            self._wake_lock = power_manager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BastonInteligente:Asistencia")
+            self._wake_lock.setReferenceCounted(False)
+            self._wake_lock.acquire()
+            print("[BastonApp] Bloqueo parcial de energía activo.")
+        except Exception as e:
+            print(f"[BastonApp] No se pudo mantener activa con pantalla apagada: {e}")
 
     def al_recibir_resultado_actividad(self, request_code, result_code, intent_data):
         """Recibe el resultado del micrófono nativo o de la cámara por Intent."""
@@ -319,8 +350,9 @@ class BastonApp(App):
             self.lector.cancelar_captura("No pude abrir la cámara para leer el documento.")
 
     def al_presionar_boton_escucha(self, instance):
-        """Re-sincroniza silenciosamente el micrófono de fondo si fue pausado."""
-        self.voz._reiniciar_escucha_android()
+        """Alternativa táctil: habilita una única escucha sin iniciar el modo continuo."""
+        self.vision.detener_detector_gesto()
+        self.activar_comando_por_gesto()
 
     def al_recibir_parcial(self, texto_parcial):
         """Muestra texto en tiempo real conforme el usuario va hablando."""
@@ -383,15 +415,14 @@ class BastonApp(App):
             self.voz.hablar(resumen)
             return
 
-        if any(w in texto for w in ["agenda", "mi agenda", "ver agenda", "consultar agenda", "mis recordatorios", "que tengo agendado", "mis tareas", "tareas", "recordatorios"]):
-            resumen = self.agenda.consultar_agenda()
-            self.lbl_estado.text = f"Agenda:\n{resumen}"
-            self.voz.hablar(resumen)
-            return
-
-        if any(w in texto for w in ["anotar", "agendar", "recordar", "guardar nota", "agregar recordatorio", "nota"]):
+        menciona_agenda = any(w in texto for w in ["agenda", "recordatorio", "recordatorios", "tarea", "tareas", "nota"])
+        quiere_guardar_agenda = (
+            any(w in texto for w in ["anotar", "agendar", "recordar", "agregar recordatorio", "guardar nota"])
+            or (menciona_agenda and any(w in texto for w in ["guardar", "agregar", "anotar", "agendar", "recordar", "nota"]))
+        )
+        if quiere_guardar_agenda:
             nota = texto_comando
-            for prefijo in ["anotar", "agendar", "recordar que", "recordar", "guardar nota", "agregar recordatorio", "nota"]:
+            for prefijo in ["quiero guardar algo en mi agenda", "quiero guardar en mi agenda", "guardar algo en mi agenda", "guardar en mi agenda", "anotar", "agendar", "recordar que", "recordar", "guardar nota", "agregar recordatorio", "nota"]:
                 pref_norm = normalizar_texto(prefijo)
                 if pref_norm in texto:
                     idx = texto.find(pref_norm)
@@ -403,8 +434,15 @@ class BastonApp(App):
             self.voz.hablar(resumen)
             return
 
+        if any(w in texto for w in ["ver agenda", "consultar agenda", "mi agenda", "mis recordatorios", "que tengo agendado", "mis tareas", "ver tareas", "que tengo en la agenda"]):
+            resumen = self.agenda.consultar_agenda()
+            self.lbl_estado.text = f"Agenda:\n{resumen}"
+            self.voz.hablar(resumen)
+            return
+
         # NODO 4: Lectura de Documentos, Hojas y Etiquetas
         if any(w in texto for w in ["leer", "lee", "lectura", "documento", "hoja", "etiqueta", "texto", "papel", "carta", "pagina", "revisa"]):
+            self.vision.detener_detector_gesto()
             self.voz.hablar("Abriendo cámara para fotografiar y leer el documento.")
             self.lector.capturar_y_leer(self.al_completar_lectura_documento, ai_assistant=self.ai)
             return
@@ -478,6 +516,7 @@ class BastonApp(App):
             "mira", "mirar", "ver entorno", "ver camara", "ver foto", "camara", "foto", "fotografia",
             "obstaculo", "obstaculos", "objeto", "objetos", "analizar", "escaneo", "escanea", "que tenemos"
         ]):
+            self.vision.detener_detector_gesto()
             self.lbl_estado.text = "Tomando foto del frente..."
             self.voz.hablar("Tomando foto del frente.")
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision, ai_assistant=self.ai)
@@ -570,8 +609,9 @@ class BastonApp(App):
                 self.voz.hablar("Conectado.")
                 self.bt.escuchar_alertas_baston(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
             else:
-                self.lbl_estado.text = "Bastón no detectado. Modo autónomo."
-                self.voz.hablar("No se detectó el bastón. La aplicación sigue completamente activa.")
+                detalle = self.bt.ultimo_error or "No se detectó el bastón."
+                self.lbl_estado.text = detalle
+                self.voz.hablar(detalle)
         Clock.schedule_once(actualizar_ui, 0)
 
 
@@ -582,10 +622,12 @@ class BastonApp(App):
     def al_completar_analisis_vision(self, resultado_texto):
         self.lbl_estado.text = f"Visión: {resultado_texto}"
         self.voz.hablar(resultado_texto)
+        Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
     def al_completar_lectura_documento(self, texto_leido):
         self.lbl_estado.text = f"Lectura: {texto_leido}"
         self.voz.hablar(texto_leido)
+        Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
     def generar_qr_compartir(self):
         if not qrcode:
@@ -604,6 +646,14 @@ class BastonApp(App):
             self.voz.detener_escucha()
         if hasattr(self, 'bt'):
             self.bt.desconectar()
+        if hasattr(self, 'vision'):
+            self.vision.detener_detector_gesto()
+        if self._wake_lock:
+            try:
+                if self._wake_lock.isHeld():
+                    self._wake_lock.release()
+            except Exception as e:
+                print(f"[BastonApp] Error liberando bloqueo de energía: {e}")
 
 if __name__ == '__main__':
     BastonApp().run()
