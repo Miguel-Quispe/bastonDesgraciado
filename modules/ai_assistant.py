@@ -59,6 +59,7 @@ class AIAssistant:
                 key = key[len(separador):].strip()
                 break
 
+        key = key.replace("\\_", "_")
         return "".join(key.split())
 
     def es_api_key_gemini_valida(self, api_key):
@@ -160,9 +161,40 @@ class AIAssistant:
                 detalle = error.read().decode("utf-8", errors="replace")
             except Exception:
                 detalle = str(error)
+            self.ultimo_error_config = self._mensaje_error_api(error.code, detalle)
             print(f"[AIAssistant] Error Gemini {contexto}: HTTP {error.code} - {detalle}")
         else:
+            self.ultimo_error_config = "No hay conexión con Gemini. Revisa internet en el celular."
             print(f"[AIAssistant] Error Gemini {contexto}: {error}")
+
+    def _mensaje_error_api(self, codigo, detalle=""):
+        texto = str(detalle).lower()
+        if codigo in [401, 403]:
+            return "Google rechazó la clave API. Verifica que sea de Google AI Studio y que Gemini API esté habilitada."
+        if codigo == 429:
+            return "La clave llegó al límite de cuota. Revisa la cuota o facturación de Google AI Studio."
+        if codigo == 503:
+            return "Gemini está saturado temporalmente. Intenta de nuevo en unos minutos."
+        if "api key" in texto or "key" in texto:
+            return "Google reportó un problema con la clave API."
+        return f"Gemini respondió con error HTTP {codigo}."
+
+    def probar_conexion_gemini_async(self, callback_resultado):
+        """Prueba una llamada real a Gemini y devuelve (exito, mensaje) por callback."""
+        def _hilo_prueba():
+            exito, mensaje = self._probar_conexion_gemini()
+            Clock.schedule_once(lambda dt: callback_resultado(exito, mensaje), 0)
+
+        threading.Thread(target=_hilo_prueba, daemon=True).start()
+
+    def _probar_conexion_gemini(self):
+        self.ultimo_error_config = ""
+        respuesta = self._consultar_gemini_api("Responde exactamente con la palabra OK.")
+        if respuesta and "no se pudo conectar" not in respuesta.lower() and "clave api" not in respuesta.lower():
+            return True, "Clave API comprobada. Gemini respondió correctamente."
+
+        mensaje = self.ultimo_error_config or "Gemini no respondió. Revisa internet, cuota o permisos de la clave."
+        return False, mensaje
 
     def responder_consulta_local(self, texto_normalizado, texto_original):
         """Procesa preguntas comunes offline (hora, fecha, ayuda, identidad, sistema)."""

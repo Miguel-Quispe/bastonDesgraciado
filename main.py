@@ -12,6 +12,7 @@ from kivy.uix.image import Image
 from kivy.uix.textinput import TextInput
 from kivy.core.window import Window
 from kivy.clock import Clock
+from kivy.metrics import dp
 
 from modules.bluetooth_manager import BluetoothManager
 from modules.speech_engine import SpeechEngine, normalizar_texto
@@ -26,6 +27,7 @@ class BastonApp(App):
         self.title = "Bastón Inteligente - Asistente Autónomo"
         # Ajuste visual para accesibilidad de alto contraste
         Window.clearcolor = (0.05, 0.08, 0.12, 1)
+        Window.softinput_mode = 'pan'
 
         self.bt = BluetoothManager()
         self.voz = SpeechEngine()
@@ -36,23 +38,28 @@ class BastonApp(App):
         self.ai = AIAssistant()
         self.evento_navegacion = None
 
-        self.layout = BoxLayout(orientation='vertical', padding=25, spacing=20)
+        self.layout = BoxLayout(
+            orientation='vertical',
+            padding=[dp(16), dp(14), dp(16), dp(16)],
+            spacing=dp(10)
+        )
 
         # ── Etiqueta de estado principal ──────────────────────────────────────
         self.lbl_estado = Label(
-            text="Asistente de Autonomía\nEscucha activa. Habla directamente o di 'Bastón'.",
-            font_size='22sp',
+            text="Asistente de Autonomía\nEscucha activa",
+            font_size='20sp',
             bold=True,
             color=(1, 1, 1, 1),
             halign='center',
             valign='middle',
-            size_hint=(1, 0.25)
+            size_hint=(1, 1)
         )
         self.lbl_estado.bind(size=self.lbl_estado.setter('text_size'))
         self.layout.add_widget(self.lbl_estado)
 
         self.img_qr = Image(
-            size_hint=(1, 0.25),
+            size_hint=(1, None),
+            height=0,
             opacity=0
         )
         self.layout.add_widget(self.img_qr)
@@ -60,19 +67,19 @@ class BastonApp(App):
         # ── Panel de configuración de clave API (oculto por defecto) ──────────
         self.panel_api = BoxLayout(
             orientation='vertical',
-            spacing=8,
+            spacing=dp(6),
             size_hint=(1, None),
             height=0,
             opacity=0
         )
 
         lbl_api_titulo = Label(
-            text="🔑 Clave API de Gemini",
-            font_size='18sp',
+            text="Clave API de Gemini",
+            font_size='17sp',
             bold=True,
             color=(0.9, 0.8, 0.2, 1),
             size_hint=(1, None),
-            height=36,
+            height=dp(30),
             halign='center'
         )
         lbl_api_titulo.bind(size=lbl_api_titulo.setter('text_size'))
@@ -80,23 +87,23 @@ class BastonApp(App):
 
         self.input_api_key = TextInput(
             hint_text="Pega aquí tu clave API de Gemini...",
-            font_size='16sp',
+            font_size='15sp',
             multiline=False,
             size_hint=(1, None),
-            height=52,
+            height=dp(48),
             background_color=(0.12, 0.16, 0.22, 1),
             foreground_color=(1, 1, 1, 1),
             cursor_color=(0.9, 0.8, 0.2, 1),
-            padding=[12, 14]
+            padding=[dp(10), dp(12)]
         )
         self.panel_api.add_widget(self.input_api_key)
 
         self.btn_guardar_api = Button(
-            text="💾 Guardar Clave API",
-            font_size='18sp',
+            text="Guardar Clave API",
+            font_size='17sp',
             bold=True,
             size_hint=(1, None),
-            height=52,
+            height=dp(48),
             background_normal='',
             background_color=(0.1, 0.5, 0.85, 1),
             color=(1, 1, 1, 1)
@@ -108,28 +115,31 @@ class BastonApp(App):
 
         # ── Botón de configuración (engranaje) ────────────────────────────────
         self.btn_config = Button(
-            text="⚙ Configurar Clave API",
+            text="Configurar Clave API",
             font_size='16sp',
             size_hint=(1, None),
-            height=44,
+            height=dp(44),
             background_normal='',
             background_color=(0.18, 0.22, 0.30, 1),
-            color=(0.7, 0.7, 0.7, 1)
+            color=(1, 1, 1, 1)
         )
         self.btn_config.bind(on_press=self.al_toggle_panel_api)
         self.layout.add_widget(self.btn_config)
 
         # ── Botón principal indicador de escucha continua ─────────────────────
         self.btn_accion = Button(
-            text="🎤 ESCUCHA CONTINUA ACTIVA\n(100% Automático - Habla libremente)",
-            font_size='20sp',
+            text="ESCUCHA CONTINUA ACTIVA\nHabla libremente",
+            font_size='19sp',
             bold=True,
-            size_hint=(1, 0.30),
+            size_hint=(1, None),
+            height=dp(118),
             background_normal='',
             background_color=(0.1, 0.65, 0.45, 1),
             color=(1, 1, 1, 1),
-            halign='center'
+            halign='center',
+            valign='middle'
         )
+        self.btn_accion.bind(size=self.btn_accion.setter('text_size'))
         self.btn_accion.bind(on_press=self.al_presionar_boton_escucha)
         self.layout.add_widget(self.btn_accion)
 
@@ -141,34 +151,44 @@ class BastonApp(App):
             # Mostrar panel: cargar la clave actual si existe
             clave_actual = self.ai.api_key or ""
             self.input_api_key.text = clave_actual
-            self.panel_api.height = 160
+            self.panel_api.height = dp(138)
             self.panel_api.opacity = 1
-            self.btn_config.text = "✖ Cerrar Configuración"
+            self.btn_config.text = "Cerrar Configuración"
             self.btn_config.background_color = (0.45, 0.1, 0.1, 1)
         else:
             # Ocultar panel
             self.panel_api.height = 0
             self.panel_api.opacity = 0
-            self.btn_config.text = "⚙ Configurar Clave API"
+            self.btn_config.text = "Configurar Clave API"
             self.btn_config.background_color = (0.18, 0.22, 0.30, 1)
 
     def al_guardar_api_key_ui(self, instance):
         """Guarda la clave API escrita en el TextInput."""
         nueva_key = self.input_api_key.text.strip()
         if not nueva_key:
-            self.lbl_estado.text = "⚠ Escribe la clave API antes de guardar."
+            self.lbl_estado.text = "Escribe la clave API antes de guardar."
             return
 
         exito = self.ai.guardar_api_key(nueva_key)
         if exito:
-            self.lbl_estado.text = "✅ Clave API de Gemini guardada correctamente."
-            self.voz.hablar("Clave API de Gemini guardada. El asistente ya puede responder preguntas.")
-            # Cerrar el panel automáticamente
-            self.al_toggle_panel_api(None)
+            self.lbl_estado.text = "Clave guardada. Probando conexión con Gemini..."
+            self.voz.hablar("Clave guardada. Probando conexión con Gemini.")
+            self.ai.probar_conexion_gemini_async(self.al_resultado_prueba_api)
         else:
             detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API de Gemini válida."
-            self.lbl_estado.text = f"❌ Error al guardar la clave. {detalle}"
+            self.lbl_estado.text = f"Error al guardar la clave. {detalle}"
             self.voz.hablar(detalle)
+
+    def al_resultado_prueba_api(self, exito, mensaje):
+        """Informa si la clave guardada puede llamar realmente a Gemini."""
+        if exito:
+            self.lbl_estado.text = "Clave API de Gemini conectada correctamente."
+            self.voz.hablar(mensaje)
+            if self.panel_api.opacity != 0:
+                self.al_toggle_panel_api(None)
+        else:
+            self.lbl_estado.text = f"Gemini no respondió: {mensaje}"
+            self.voz.hablar(mensaje)
 
 
 
@@ -309,6 +329,7 @@ class BastonApp(App):
         print(f"[BastonApp - Procesando comando]: '{texto_comando}' (norm: '{texto}')")
         self.lbl_estado.text = f"Comando: {texto_comando}"
         self.img_qr.opacity = 0
+        self.img_qr.height = 0
 
         # NODO 0: Saludo y Activación por voz
         if any(w in texto for w in ["hola", "saludo", "buenas", "activado", "estas ahi", "ayuda", "quien eres"]):
@@ -436,6 +457,7 @@ class BastonApp(App):
                 self.img_qr.source = ruta_qr
                 self.img_qr.reload()
                 self.img_qr.opacity = 1
+                self.img_qr.height = dp(180)
             self.voz.hablar("Código QR generado en la pantalla para compartir la aplicación.")
             return
 
@@ -473,8 +495,9 @@ class BastonApp(App):
             if nueva_key:
                 exito = self.ai.guardar_api_key(nueva_key)
                 if exito:
-                    self.lbl_estado.text = "Clave API de Gemini guardada."
-                    self.voz.hablar("Clave API de Gemini guardada correctamente.")
+                    self.lbl_estado.text = "Clave guardada. Probando conexión con Gemini..."
+                    self.voz.hablar("Clave guardada. Probando conexión con Gemini.")
+                    self.ai.probar_conexion_gemini_async(self.al_resultado_prueba_api)
                 else:
                     detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API de Gemini válida."
                     self.lbl_estado.text = f"Error al guardar API Key. {detalle}"
