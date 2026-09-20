@@ -41,10 +41,10 @@ class BluetoothManager:
             print("[BluetoothManager] Conexión establecida exitosamente con el ESP32.")
             return True
         except ImportError:
-            print("[BluetoothManager] PyJNiUS no disponible (Entorno PC). Modo simulación activado.")
-            self.conectado = True
-            self.modo_simulacion = True
-            return True
+            print("[BluetoothManager] PyJNiUS no disponible (Entorno PC). Bluetooth no disponible.")
+            self.conectado = False
+            self.modo_simulacion = False
+            return False
         except Exception as e:
             print(f"[BluetoothManager] Error al conectar Bluetooth ({self.mac_address}): {e}")
             self.conectado = False
@@ -72,9 +72,8 @@ class BluetoothManager:
         def loop_lectura():
             while self.conectado:
                 if self.modo_simulacion:
-                    time.sleep(15)
-                    if self.conectado:
-                        callback_alerta("Atención: Obstáculo detectado en línea recta (Simulación)")
+                    # En modo simulación no enviar alertas automáticas
+                    time.sleep(5)
                     continue
 
                 try:

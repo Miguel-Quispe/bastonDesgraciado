@@ -12,6 +12,7 @@ bin/
 *.apk
 *.aab
 
-# Modelos binarios grandes si no se quieren en el repo directo (opcional)
-# *.tflite
-# model/
+# Modelos binarios grandes (Vosk ~45MB, YOLO, etc.)
+model/
+*.tflite
+vosk_model_es.zip

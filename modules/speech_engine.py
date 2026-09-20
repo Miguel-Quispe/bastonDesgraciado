@@ -2,7 +2,21 @@ import os
 import json
 import threading
 import time
+import queue
+import unicodedata
+import re
 from kivy.clock import Clock
+
+def normalizar_texto(texto):
+    """Limpia el texto convirtiendo a minúsculas, quitando acentos y signos de puntuación."""
+    if not texto:
+        return ""
+    s = str(texto).lower().strip()
+    s = ''.join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
+    s = re.sub(r'[^\w\s]', ' ', s)
+    s = re.sub(r'\s+', ' ', s).strip()
+    return s
+
 
 class SpeechEngine:
     def __init__(self, ruta_modelo="model", palabras_activacion=None):
@@ -12,7 +26,13 @@ class SpeechEngine:
         self.hilo_escucha = None
         self.reconocedor_vosk = None
         self.modelo_vosk = None
-        
+        self.reproduciendo_tts = False  # Previene que el micrófono escuche a los propios parlantes
+
+        # Cola y Hilo dedicado para síntesis de voz en PC (evita cierres o cuelgues SAPI5)
+        self._cola_tts = queue.Queue()
+        self._hilo_tts_pc = threading.Thread(target=self._loop_tts_pc, daemon=True)
+        self._hilo_tts_pc.start()
+
         # Archivo de configuración persistente
         self.archivo_config = os.path.join(os.getcwd(), "config_asistente.json")
         self.nombre_asistente = self._cargar_config_nombre()
@@ -77,8 +97,70 @@ class SpeechEngine:
             self.tts = self.TextToSpeech(self.activity, None)
             print("[SpeechEngine] Motor TTS de Android inicializado correctamente.")
         except Exception as e:
-            print(f"[SpeechEngine] No se pudo inicializar TTS nativo de Android ({e}). Modo consola activado.")
+            print(f"[SpeechEngine] TTS de Android no activo. Se usará motor PC dedicado.")
             self.tts = None
+
+    def _loop_tts_pc(self):
+        """Hilo único dedicado para voz en PC con SAPI.SpVoice nativo de Windows, pyttsx3 y PowerShell."""
+        sp_voice = None
+        try:
+            import comtypes.client
+            sp_voice = comtypes.client.CreateObject("SAPI.SpVoice")
+            print("[SpeechEngine] Motor SAPI5 SpVoice nativo de Windows activado exitosamente.")
+        except Exception as e:
+            print(f"[SpeechEngine] SAPI SpVoice directo no disponible: {e}")
+
+        engine = None
+        if not sp_voice:
+            try:
+                import pyttsx3
+                engine = pyttsx3.init()
+                engine.setProperty('rate', 160)
+                print("[SpeechEngine] pyttsx3 activado.")
+            except Exception as e:
+                print(f"[SpeechEngine] pyttsx3 no disponible: {e}")
+
+        while True:
+            try:
+                texto = self._cola_tts.get()
+                if texto is None:
+                    break
+                
+                texto_str = str(texto).strip()
+                if not texto_str:
+                    self._cola_tts.task_done()
+                    continue
+
+                # Marcar que la app está hablando para silenciar el micrófono y romper bucles de eco
+                self.reproduciendo_tts = True
+
+                if sp_voice:
+                    sp_voice.Speak(texto_str)
+                elif engine:
+                    engine.say(texto_str)
+                    engine.runAndWait()
+                else:
+                    import subprocess
+                    txt_clean = texto_str.replace("'", " ").replace('"', " ")
+                    subprocess.run(
+                        f'PowerShell -Command "Add-Type -AssemblyName System.Speech; (New-Object System.Speech.Synthesis.SpeechSynthesizer).Speak(\'{txt_clean}\')"',
+                        shell=True
+                    )
+
+                # Pausa breve para disipar el eco del parlante en la habitación
+                time.sleep(0.4)
+                if self.reconocedor_vosk:
+                    try:
+                        self.reconocedor_vosk.Result()  # Descartar cualquier audio captado durante la locución
+                    except Exception:
+                        pass
+                self.reproduciendo_tts = False
+                self._cola_tts.task_done()
+            except Exception as e:
+                print(f"[SpeechEngine] Error al reproducir audio TTS en PC: {e}")
+                self.reproduciendo_tts = False
+
+
 
     def _inicializar_vosk(self):
         """Inicializa el modelo de Vosk si la carpeta existe en PC/desarrollo."""
@@ -95,7 +177,7 @@ class SpeechEngine:
             print(f"[SpeechEngine] Vosk no disponible: {e}")
 
     def hablar(self, texto, reintentos=2):
-        """Convierte texto a voz mediante el motor nativo de Android o consola en desarrollo."""
+        """Convierte texto a voz mediante el motor nativo de Android o pyttsx3 en PC."""
         print(f"[TTS Audio Output]: {texto}")
         if self.tts:
             try:
@@ -106,7 +188,10 @@ class SpeechEngine:
                 if res != 0 and reintentos > 0:
                     Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.8)
             except Exception as e:
-                print(f"[SpeechEngine] Error al reproducir TTS: {e}")
+                print(f"[SpeechEngine] Error al reproducir TTS Android: {e}")
+        else:
+            self._cola_tts.put(texto)
+
 
     def estan_auriculares_conectados(self):
         """Verifica si hay auriculares conectados por cable de forma segura."""
@@ -144,22 +229,60 @@ class SpeechEngine:
         print("[SpeechEngine] Escucha continua detenida.")
 
     def _loop_escucha_continua(self, callback_comando, callback_parcial):
-        """Usa SpeechRecognizer nativo en Android o PyAudio/Vosk en PC."""
+        """Usa SpeechRecognizer nativo en Android o PyAudio/Vosk + Consola en PC."""
         if self.activity:
             self._iniciar_reconocimiento_nativo_android(callback_comando, callback_parcial)
-        elif self.reconocedor_vosk:
-            self._grabar_audio_desktop(callback_comando, callback_parcial)
         else:
+            # En PC: Iniciar micrófono en hilo secundario para no bloquear el teclado
+            if self.reconocedor_vosk:
+                hilo_mic = threading.Thread(
+                    target=self._grabar_audio_desktop,
+                    args=(callback_comando, callback_parcial),
+                    daemon=True
+                )
+                hilo_mic.start()
+                print("[SpeechEngine] Micrófono Vosk activo en segundo plano.")
+            
+            # Entrada por teclado en la consola de la PC (garantizado para desarrollo y pruebas)
             self._simular_escucha_continua(callback_comando)
 
+
+    def solicitar_voz_android(self):
+        """Dispara el diálogo nativo de voz de Android con micrófono en pantalla (100% garantizado)."""
+        if self.activity:
+            try:
+                from jnius import autoclass
+                Intent = autoclass('android.content.Intent')
+                RecognizerIntent = autoclass('android.speech.RecognizerIntent')
+                
+                intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+                intent.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
+                intent.putExtra(RecognizerIntent.EXTRA_PROMPT, f"Di tu comando o 'Hola {self.nombre_asistente.capitalize()}'...")
+                
+                self.activity.startActivityForResult(intent, 1001)
+                print("[SpeechEngine] Intent nativo de escucha por voz iniciado.")
+            except Exception as e:
+                print(f"[SpeechEngine] Error al iniciar voz por Intent: {e}")
+
     def _iniciar_reconocimiento_nativo_android(self, callback_comando, callback_parcial=None):
-        """Inicia el reconocedor de voz nativo de Android (android.speech.SpeechRecognizer)."""
+        """Inicia el reconocedor de voz nativo de Android en el Looper del Hilo UI."""
         try:
             from jnius import autoclass, PythonJavaClass, java_method
             
             SpeechRecognizer = autoclass('android.speech.SpeechRecognizer')
             Intent = autoclass('android.content.Intent')
             RecognizerIntent = autoclass('android.speech.RecognizerIntent')
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+
+            class Runnable(PythonJavaClass):
+                __javainterfaces__ = ['java/lang/Runnable']
+                def __init__(self, func):
+                    super().__init__()
+                    self.func = func
+                @java_method('()V')
+                def run(self):
+                    self.func()
 
             class EscuchadorAndroid(PythonJavaClass):
                 __javainterfaces__ = ['android/speech/RecognitionListener']
@@ -172,7 +295,7 @@ class SpeechEngine:
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onReadyForSpeech(self, params):
-                    print("[SpeechRecognizer Android] Micrófono listo para escuchar.")
+                    print("[SpeechRecognizer Android] Micrófono listo.")
 
                 @java_method('()V')
                 def onBeginningOfSpeech(self):
@@ -192,9 +315,9 @@ class SpeechEngine:
 
                 @java_method('(I)V')
                 def onError(self, error):
-                    print(f"[SpeechRecognizer Android] Aviso reconocimiento ({error}). Reanudando...")
+                    print(f"[SpeechRecognizer Android] Error ({error}). Reanudando...")
                     if self.engine.escuchando:
-                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 1.0)
+                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 1.2)
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onResults(self, results):
@@ -202,13 +325,13 @@ class SpeechEngine:
                         matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if matches and matches.size() > 0:
                             texto = str(matches.get(0)).strip()
-                            print(f"[SpeechRecognizer Texto Reconocido]: '{texto}'")
+                            print(f"[SpeechRecognizer Texto]: '{texto}'")
                             self.engine._procesar_texto_reconocido(texto, self.callback_cmd)
                     except Exception as e:
                         print(f"[SpeechRecognizer Error Resultados]: {e}")
                     
                     if self.engine.escuchando:
-                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 0.4)
+                        Clock.schedule_once(lambda dt: self.engine._reiniciar_escucha_android(), 0.5)
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onPartialResults(self, partialResults):
@@ -226,9 +349,9 @@ class SpeechEngine:
 
             self.escuchador_listener = EscuchadorAndroid(self, callback_comando, callback_parcial)
             
-            def iniciar_en_main_thread(dt):
+            def accion_ui():
                 try:
-                    self.speech_rec = SpeechRecognizer.createSpeechRecognizer(self.activity)
+                    self.speech_rec = SpeechRecognizer.createSpeechRecognizer(PythonActivity.mActivity)
                     self.speech_rec.setRecognitionListener(self.escuchador_listener)
                     
                     self.intent_escucha = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
@@ -237,18 +360,33 @@ class SpeechEngine:
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
                     
                     self.speech_rec.startListening(self.intent_escucha)
-                    print("[SpeechEngine Android] Recognizer nativo iniciado exitosamente.")
+                    print("[SpeechEngine UI Thread] SpeechRecognizer iniciado en Hilo UI.")
                 except Exception as e:
-                    print(f"[SpeechEngine Android Error Iniciar]: {e}")
+                    print(f"[SpeechEngine UI Thread Error]: {e}")
 
-            Clock.schedule_once(iniciar_en_main_thread, 0.5)
+            PythonActivity.mActivity.runOnUiThread(Runnable(accion_ui))
         except Exception as e:
-            print(f"[SpeechEngine Android Error Listener]: {e}")
+            print(f"[SpeechEngine Android Listener Error]: {e}")
 
     def _reiniciar_escucha_android(self):
         if self.escuchando and hasattr(self, 'speech_rec') and self.speech_rec and hasattr(self, 'intent_escucha'):
             try:
-                self.speech_rec.startListening(self.intent_escucha)
+                from jnius import autoclass, PythonJavaClass, java_method
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                class Runnable(PythonJavaClass):
+                    __javainterfaces__ = ['java/lang/Runnable']
+                    def __init__(self, func):
+                        super().__init__()
+                        self.func = func
+                    @java_method('()V')
+                    def run(self):
+                        self.func()
+                def reanudar():
+                    try:
+                        self.speech_rec.startListening(self.intent_escucha)
+                    except Exception:
+                        pass
+                PythonActivity.mActivity.runOnUiThread(Runnable(reanudar))
             except Exception as e:
                 print(f"[SpeechEngine Android Error Reanudar]: {e}")
 
@@ -258,58 +396,120 @@ class SpeechEngine:
             p = pyaudio.PyAudio()
             stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=4000)
             stream.start_stream()
+            print("[SpeechEngine] Micrófono de PC escuchando en segundo plano...")
             
             while self.escuchando:
                 data = stream.read(4000, exception_on_overflow=False)
+                
+                # Prevenir bucles de eco: si el asistente está hablando por los parlantes, ignorar el micrófono
+                if self.reproduciendo_tts:
+                    continue
+
                 if self.reconocedor_vosk.AcceptWaveform(data):
                     res = json.loads(self.reconocedor_vosk.Result())
                     texto = res.get("text", "").strip()
                     if texto:
+                        print(f"\n🎤 [MICRÓFONO DETECTÓ VOZ]: '{texto}'")
                         self._procesar_texto_reconocido(texto, callback_comando)
                 elif callback_parcial:
                     partial_res = json.loads(self.reconocedor_vosk.PartialResult())
                     parcial = partial_res.get("partial", "").strip()
                     if parcial:
                         Clock.schedule_once(lambda dt, p=parcial: callback_parcial(p), 0)
+
                         
             stream.stop_stream()
             stream.close()
             p.terminate()
         except Exception as e:
-            print(f"[SpeechEngine] Error en captura Desktop: {e}")
-            self._simular_escucha_continua(callback_comando)
+            print(f"[SpeechEngine] Aviso en captura de micrófono PC ({e}). Se usará teclado en consola.")
+
 
     def _simular_escucha_continua(self, callback_comando):
-        """Simula comandos periódicos en modo de desarrollo sin hardware."""
+        """Modo de desarrollo en PC: acepta comandos escritos por teclado en la consola."""
+        nombre = self.nombre_asistente.capitalize()
+        print(f"\n{'='*60}")
+        print(f"  MODO PC - ENTRADA POR TECLADO")
+        print(f"  Escribe tus comandos como si hablaras.")
+        print(f"  Ejemplo: 'hola' o 'dónde estoy' o 'mi agenda'")
+        print(f"  Escribe 'salir' para detener.")
+        print(f"{'='*60}\n")
+
         while self.escuchando:
-            time.sleep(15)
-            if self.escuchando:
-                print("[SpeechEngine - Simulación]: Comando recibido")
-                Clock.schedule_once(lambda dt: callback_comando("bastón dónde estoy"), 0)
+            try:
+                entrada = input(f"[{nombre}] Tu comando > ").strip()
+                if not entrada:
+                    continue
+                if entrada.lower() == "salir":
+                    self.escuchando = False
+                    print("[SpeechEngine] Escucha detenida por el usuario.")
+                    break
+                print(f"[SpeechEngine - PC]: Comando recibido: '{entrada}'")
+                self._procesar_texto_reconocido(entrada, callback_comando)
+            except (EOFError, KeyboardInterrupt):
+                self.escuchando = False
+                break
+            except Exception as e:
+                print(f"[SpeechEngine - PC Error]: {e}")
+                time.sleep(1)
 
     def _procesar_texto_reconocido(self, texto_completo, callback_comando):
-        """Filtra y limpia el texto reconociendo si incluye o no la palabra de activación."""
-        texto_lower = texto_completo.lower().strip()
-        print(f"[SpeechEngine - Reconocido]: '{texto_lower}'")
-        if not texto_lower:
+        """Filtra y limpia el texto reconociendo por coincidencias clave sin exigir frases exactas ni nombres obligatorios."""
+        if not texto_completo:
+            return
+
+        texto_norm = normalizar_texto(texto_completo)
+        print(f"[SpeechEngine - Reconocido original]: '{texto_completo}'")
+        print(f"[SpeechEngine - Reconocido normalizado]: '{texto_norm}'")
+        if not texto_norm:
             return
 
         activado = False
-        comando_limpio = texto_lower
-        
-        # 1. Comprobar palabras de activación (ej. bastón, rayo, oye rayo, hola rayo)
+        comando_limpio = texto_norm
+
+        # 1. Comprobar si incluye alguna palabra de activación (ej. bastón, rayo, oye bastón)
         for palabra in self.palabras_activacion:
-            if palabra in texto_lower:
+            palabra_norm = normalizar_texto(palabra)
+            if palabra_norm and palabra_norm in texto_norm:
                 activado = True
-                comando_limpio = texto_lower.replace(palabra, "").strip()
+                comando_limpio = texto_norm.replace(palabra_norm, "").strip()
                 break
 
-        # 2. Si no incluía la palabra clave exacta pero contiene una intención directa (ej. "hola", "dónde estoy")
+        # 2. Búsqueda exhaustiva por coincidencias de cualquier intención
+        coincidencias_clave = [
+            # Visión / Obstáculos / Frente
+            "frente", "delante", "adelante", "enfrente", "que hay", "que veo", "que ves", "que miras",
+            "mira", "mirar", "ver", "entorno", "alrededor", "camara", "foto", "obstaculo", "obstaculos",
+            "analizar", "escaneo", "escanea", "objeto", "objetos", "que tenemos",
+            # Ubicación GPS
+            "donde", "ubicacion", "lugar", "posicion", "direccion", "donde estoy", "donde ando", "donde encuentro",
+            # Navegación
+            "guiame", "guia", "llevame", "lleva", "ir a", "ir al", "ir a la", "como llego", "navegar", "ruta", "destino", "dirigeme",
+            # Cancelar
+            "cancelar", "detener", "parar",
+            # Lectura Documentos
+            "leer", "lee", "lectura", "documento", "hoja", "etiqueta", "texto", "papel", "carta", "pagina",
+            # Agenda
+            "agenda", "anotar", "agendar", "recordar", "nota", "recordatorio", "recordatorios", "tarea", "tareas",
+            # Bastón / Bluetooth
+            "conectar", "conectate", "desconectar", "enlazar", "vincular", "bluetooth",
+            # Asistente / Nombre
+            "nombre", "llamarte", "llamate", "llamame", "tu nombre",
+            # QR
+            "qr", "codigo", "compartir", "comparte",
+            # Saludo
+            "hola", "saludo", "ayuda", "activado", "quien eres", "buenas", "estas ahi"
+        ]
+
         if not activado:
-            comandos_directos = ["hola", "saludo", "ayuda", "dónde estoy", "donde estoy", "ubicación", "guíame", "guiame", "llévame", "llevame", "foto", "mira", "leer", "agenda", "anotar", "conectar", "desconectar"]
-            if any(cmd in texto_lower for cmd in comandos_directos):
+            if any(kw in texto_norm for kw in coincidencias_clave):
                 activado = True
 
         if activado:
             instruccion = comando_limpio if comando_limpio else "hola"
             Clock.schedule_once(lambda dt: callback_comando(instruccion), 0)
+        else:
+            # Si se escuchó algo con longitud razonable, enviarlo para dar feedback siempre
+            if len(texto_norm) >= 2:
+                Clock.schedule_once(lambda dt: callback_comando(texto_norm), 0)
+
