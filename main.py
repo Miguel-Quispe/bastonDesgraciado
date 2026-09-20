@@ -18,6 +18,7 @@ from modules.location_service import LocationService
 from modules.vision_analyzer import VisionAnalyzer
 from modules.agenda_manager import AgendaManager
 from modules.document_reader import DocumentReader
+from modules.ai_assistant import AIAssistant
 
 class BastonApp(App):
     def build(self):
@@ -31,6 +32,7 @@ class BastonApp(App):
         self.vision = VisionAnalyzer()
         self.agenda = AgendaManager()
         self.lector = DocumentReader()
+        self.ai = AIAssistant()
         self.evento_navegacion = None
 
         self.layout = BoxLayout(orientation='vertical', padding=25, spacing=20)
@@ -66,6 +68,7 @@ class BastonApp(App):
         self.layout.add_widget(self.btn_accion)
 
         return self.layout
+
 
     def solicitar_permisos_android(self):
         try:
@@ -300,9 +303,45 @@ class BastonApp(App):
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision)
             return
 
-        # NODO 10: Fallback Si no coincidió ningún patrón
-        self.voz.hablar("Te escucho. Puedes decir 'hola', 'qué hay al frente', 'mi agenda', 'dónde estoy' o 'leer documento'.")
-        self.lbl_estado.text = "Listo para tus comandos."
+        # NODO 10: Guardar Clave API de Gemini por Voz o Teclado
+        if any(w in texto for w in ["guardar clave", "guardar api key", "guardar clave api"]):
+            nueva_key = texto_comando
+            for pref in ["guardar clave api", "guardar clave", "guardar api key"]:
+                pref_norm = normalizar_texto(pref)
+                if pref_norm in texto:
+                    idx = texto.find(pref_norm)
+                    if idx != -1:
+                        nueva_key = texto_comando[idx + len(pref_norm):].strip()
+                    break
+            if nueva_key:
+                exito = self.ai.guardar_api_key(nueva_key)
+                if exito:
+                    self.lbl_estado.text = "Clave API de Gemini guardada."
+                    self.voz.hablar("Clave API de Gemini guardada correctamente.")
+                else:
+                    self.lbl_estado.text = "Error al guardar API Key."
+                    self.voz.hablar("Ocurrió un error al guardar la clave.")
+            else:
+                self.voz.hablar("No detecté la clave API. Repite guardar clave seguido de tu clave.")
+            return
+
+        # NODO 11: Consultas Locales Offline (Hora, Fecha, Identidad, Estado)
+        res_local = self.ai.responder_consulta_local(texto, texto_comando)
+        if res_local:
+            self.lbl_estado.text = res_local
+            self.voz.hablar(res_local)
+            return
+
+        # NODO 12: IA Conversacional Gemini (Preguntas Libres del Usuario)
+        self.lbl_estado.text = f"Consultando IA: {texto_comando}"
+        self.voz.hablar("Pensando...")
+        self.ai.consultar_gemini_async(texto_comando, self.al_recibir_respuesta_gemini)
+
+    def al_recibir_respuesta_gemini(self, respuesta):
+        """Recibe la respuesta generada por Gemini y la reproduce por voz."""
+        self.lbl_estado.text = f"IA: {respuesta}"
+        self.voz.hablar(respuesta)
+
 
 
 
