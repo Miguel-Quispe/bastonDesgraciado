@@ -3,6 +3,7 @@ import json
 import datetime
 import urllib.request
 import urllib.parse
+import urllib.error
 import threading
 from kivy.clock import Clock
 
@@ -132,6 +133,37 @@ class AIAssistant:
     def tiene_api_key_configurada(self):
         return self.es_api_key_gemini_valida(self.api_key)
 
+    def _crear_request_gemini(self, model, payload, timeout_segundos=9):
+        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        data_bytes = json.dumps(payload).encode("utf-8")
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": key,
+        }
+        return urllib.request.Request(url, data=data_bytes, headers=headers), timeout_segundos
+
+    def _leer_respuesta_gemini(self, response):
+        res_json = json.loads(response.read().decode("utf-8"))
+        candidates = res_json.get("candidates", [])
+        if not candidates:
+            return ""
+        parts = candidates[0].get("content", {}).get("parts", [])
+        if not parts:
+            return ""
+        txt = parts[0].get("text", "").strip()
+        return txt.replace("*", "").replace("#", "").replace("-", " ")
+
+    def _registrar_error_gemini(self, contexto, error):
+        if isinstance(error, urllib.error.HTTPError):
+            try:
+                detalle = error.read().decode("utf-8", errors="replace")
+            except Exception:
+                detalle = str(error)
+            print(f"[AIAssistant] Error Gemini {contexto}: HTTP {error.code} - {detalle}")
+        else:
+            print(f"[AIAssistant] Error Gemini {contexto}: {error}")
+
     def responder_consulta_local(self, texto_normalizado, texto_original):
         """Procesa preguntas comunes offline (hora, fecha, ayuda, identidad, sistema)."""
         texto = texto_normalizado
@@ -178,7 +210,7 @@ class AIAssistant:
         if not self.es_api_key_gemini_valida(key):
             return "La clave guardada no parece ser de Gemini. Borra esa clave y pega una clave válida de Google AI Studio."
 
-        modelos = ["gemini-flash-latest", "gemini-flash-lite-latest", "gemini-2.5-flash", "gemini-1.5-flash"]
+        modelos = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.7-flash"]
         
         prompt_sistema = (
             "Eres el asistente de voz de un bastón inteligente para personas no videntes. "
@@ -197,24 +229,16 @@ class AIAssistant:
             ]
         }
 
-        data_bytes = json.dumps(payload).encode("utf-8")
-
         for model in modelos:
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
-            req = urllib.request.Request(url, data=data_bytes, headers={"Content-Type": "application/json"})
             try:
-                with urllib.request.urlopen(req, timeout=9) as response:
+                req, timeout_segundos = self._crear_request_gemini(model, payload, timeout_segundos=9)
+                with urllib.request.urlopen(req, timeout=timeout_segundos) as response:
                     if response.status == 200:
-                        res_json = json.loads(response.read().decode("utf-8"))
-                        candidates = res_json.get("candidates", [])
-                        if candidates:
-                            parts = candidates[0].get("content", {}).get("parts", [])
-                            if parts:
-                                txt = parts[0].get("text", "").strip()
-                                txt_limpio = txt.replace("*", "").replace("#", "").replace("-", " ")
-                                return txt_limpio
+                        txt_limpio = self._leer_respuesta_gemini(response)
+                        if txt_limpio:
+                            return txt_limpio
             except Exception as e:
-                print(f"[AIAssistant] Error consultando {model}: {e}")
+                self._registrar_error_gemini(model, e)
                 continue
 
         return "No se pudo conectar con la IA de Gemini. Verifica que tu clave API de Google AI Studio sea válida y tengas conexión a internet."
@@ -240,8 +264,6 @@ class AIAssistant:
             with open(ruta_imagen, "rb") as img_f:
                 b64_data = base64.b64encode(img_f.read()).decode("utf-8")
 
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={self.api_key}"
-
             prompt_sistema = (
                 "Eres el asistente de visión de un bastón inteligente para personas no videntes. "
                 "Responde de forma clara, directa y muy concisa en 1 o 2 oraciones sencillas en español. "
@@ -255,8 +277,8 @@ class AIAssistant:
                         "parts": [
                             {"text": prompt_sistema},
                             {
-                                "inlineData": {
-                                    "mimeType": "image/jpeg",
+                                "inline_data": {
+                                    "mime_type": "image/jpeg",
                                     "data": b64_data
                                 }
                             }
@@ -265,19 +287,16 @@ class AIAssistant:
                 ]
             }
 
-            data_bytes = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(url, data=data_bytes, headers={"Content-Type": "application/json"})
-
-            with urllib.request.urlopen(req, timeout=12) as response:
-                if response.status == 200:
-                    res_json = json.loads(response.read().decode("utf-8"))
-                    candidates = res_json.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            txt = parts[0].get("text", "").strip()
-                            txt_limpio = txt.replace("*", "").replace("#", "").replace("-", " ")
-                            return txt_limpio
+            for model in ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.7-flash"]:
+                try:
+                    req, timeout_segundos = self._crear_request_gemini(model, payload, timeout_segundos=12)
+                    with urllib.request.urlopen(req, timeout=timeout_segundos) as response:
+                        if response.status == 200:
+                            txt_limpio = self._leer_respuesta_gemini(response)
+                            if txt_limpio:
+                                return txt_limpio
+                except Exception as e:
+                    self._registrar_error_gemini(f"vision {model}", e)
         except Exception as e:
             print(f"[AIAssistant Vision] Error al consultar Gemini Vision: {e}")
 
