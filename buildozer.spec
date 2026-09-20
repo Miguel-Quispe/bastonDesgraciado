@@ -18,7 +18,7 @@ source.include_exts = py,png,jpg,kv,atlas,json,txt,model,bin,pb,tflite,onnx
 source.exclude_dirs = tests,bin,.venv,.git,.github
 
 # (str) Application versioning (method 1)
-version = 0.2
+version = 0.3
 
 # (list) Application requirements
 requirements = python3,kivy,requests,pyjnius,pillow,qrcode

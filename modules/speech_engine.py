@@ -113,19 +113,19 @@ class SpeechEngine:
                 print(f"[SpeechEngine] Error al reproducir TTS: {e}")
 
     def estan_auriculares_conectados(self):
-        """Verifica si hay auriculares conectados por cable o Bluetooth."""
+        """Verifica si hay auriculares conectados por cable de forma segura sin requerir permisos de Bluetooth ni bloquear."""
         if self.activity:
             try:
                 from jnius import autoclass
                 Context = autoclass('android.content.Context')
                 audio_manager = self.activity.getSystemService(Context.AUDIO_SERVICE)
-                
                 if audio_manager:
-                    wired = audio_manager.isWiredHeadsetOn()
-                    bluetooth = audio_manager.isBluetoothA2dpOn()
-                    return wired or bluetooth
+                    try:
+                        return bool(audio_manager.isWiredHeadsetOn())
+                    except Exception:
+                        pass
             except Exception as e:
-                print(f"[SpeechEngine] Error al comprobar auriculares: {e}")
+                print(f"[SpeechEngine] Aviso al comprobar auriculares: {e}")
         return False
 
     def iniciar_escucha_continua(self, callback_comando, callback_parcial=None):

@@ -166,22 +166,16 @@ class BastonApp(App):
                 self.voz.hablar(f"No entendí el nuevo nombre. Mi nombre actual es {self.voz.nombre_asistente.capitalize()}.")
             return
 
-        # NODO 1: Conexión con el Bastón ESP32
+        # NODO 1: Conexión Opcional Asíncrona con el Bastón ESP32
         if any(w in texto for w in ["conectar", "conéctate", "conectate", "baston", "bastón", "enlazar"]) and not any(w in texto for w in ["guía", "guia", "llévame", "llevame", "ir"]):
             if "desconectar" in texto:
                 self.bt.desconectar()
                 self.lbl_estado.text = "Bastón desconectado."
                 self.voz.hablar("Bastón desconectado.")
             else:
-                self.voz.hablar("Conectando con el bastón.")
-                exito = self.bt.conectar()
-                if exito:
-                    self.voz.hablar("Conectado con éxito al bastón.")
-                    self.lbl_estado.text = "Estado: Conectado al Bastón ESP32"
-                    self.bt.escuchar_alertas_baston(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
-                else:
-                    self.voz.hablar("No se pudo establecer la conexión Bluetooth con el bastón.")
-                    self.lbl_estado.text = "Error: Sin conexión Bluetooth"
+                self.lbl_estado.text = "Estado: Conectando Bluetooth..."
+                self.voz.hablar("Buscando señal del bastón en segundo plano.")
+                self.bt.conectar_async(self.al_completar_conexion_baston)
 
         # NODO 2: Navegación y Guiado a un Destino (Voz o Coordenadas)
         elif any(w in texto for w in ["guíame", "guiame", "llévame", "llevame", "ir a", "cómo llego", "como llego", "navegar a"]):
@@ -295,6 +289,17 @@ class BastonApp(App):
         self.lbl_estado.text = f"Estado: {mensaje_estado}"
         if "Reconectando" in mensaje_estado or "Reconectado" in mensaje_estado:
             self.voz.hablar(mensaje_estado)
+
+    def al_completar_conexion_baston(self, exito):
+        def actualizar_ui(dt):
+            if exito:
+                self.lbl_estado.text = "Estado: Conectado al Bastón ESP32"
+                self.voz.hablar("Bastón conectado con éxito.")
+                self.bt.escuchar_alertas_baston(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
+            else:
+                self.lbl_estado.text = "Bastón no conectado. App lista."
+                self.voz.hablar("No se detectó el bastón. La aplicación sigue completamente activa.")
+        Clock.schedule_once(actualizar_ui, 0)
 
     def _actualizar_ui_alerta(self, mensaje_alerta):
         self.lbl_estado.text = f"¡ALERTA!: {mensaje_alerta}"
