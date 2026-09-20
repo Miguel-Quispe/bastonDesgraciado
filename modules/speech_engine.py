@@ -30,6 +30,8 @@ class SpeechEngine:
         self._reiniciando_mic = False    # Antirrebote: evita reinicios simultáneos del mic
         self._ultimo_reinicio_mic = 0    # Timestamp del último reinicio exitoso
         self._evento_reinicio_mic = None # Referencia al Clock.schedule_once pendiente (para cancelarlo)
+        self._errores_mic_consecutivos = 0
+        self._ultimo_texto_parcial = ""
 
         # Cola y Hilo dedicado para síntesis de voz en PC (evita cierres o cuelgues SAPI5)
         self._cola_tts = queue.Queue()
@@ -374,6 +376,16 @@ class SpeechEngine:
     def _iniciar_reconocimiento_nativo_android(self, callback_comando, callback_parcial=None):
         """Inicia el reconocedor de voz nativo de Android en el Looper del Hilo UI."""
         try:
+            if not self.escuchando:
+                return
+
+            if getattr(self, 'reproduciendo_tts', False):
+                Clock.schedule_once(
+                    lambda dt: self._iniciar_reconocimiento_nativo_android(callback_comando, callback_parcial),
+                    0.6
+                )
+                return
+
             from jnius import autoclass, PythonJavaClass, java_method
             
             SpeechRecognizer = autoclass('android.speech.SpeechRecognizer')
@@ -401,6 +413,8 @@ class SpeechEngine:
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onReadyForSpeech(self, params):
+                    self.engine._errores_mic_consecutivos = 0
+                    self.engine._ultimo_texto_parcial = ""
                     print("[SpeechRecognizer Android] Micrófono listo.")
 
                 @java_method('()V')
@@ -432,6 +446,17 @@ class SpeechEngine:
                     if not self.engine.escuchando or getattr(self.engine, 'reproduciendo_tts', False):
                         return  # No reiniciar si el TTS está hablando
 
+                    if error == 9:
+                        self.engine.escuchando = False
+                        print("[SpeechRecognizer] Permiso de micrófono insuficiente. Escucha detenida.")
+                        return
+
+                    parcial = getattr(self.engine, '_ultimo_texto_parcial', '').strip()
+                    if parcial and error in [6, 7]:
+                        print(f"[SpeechRecognizer Parcial usado]: '{parcial}'")
+                        self.engine._procesar_texto_reconocido(parcial, self.callback_cmd)
+                        self.engine._ultimo_texto_parcial = ""
+
                     if self.engine._evento_reinicio_mic is not None:
                         try:
                             self.engine._evento_reinicio_mic.cancel()
@@ -439,14 +464,17 @@ class SpeechEngine:
                             pass
                         self.engine._evento_reinicio_mic = None
 
+                    self.engine._errores_mic_consecutivos += 1
+                    extra = min(self.engine._errores_mic_consecutivos * 0.4, 4.0)
+
                     # Errores 6 (SPEECH_TIMEOUT) y 7 (NO_MATCH) son normales cuando nadie habla.
-                    # Se reinicia inmediatamente en 0.4s para mantener la escucha continua sin pausas.
+                    # Se reinicia con una pausa breve para que Android no quede en RECOGNIZER_BUSY.
                     if error in [6, 7]:
-                        retardo = 0.4
+                        retardo = 1.2 + extra
                     elif error == 8:   # RECOGNIZER_BUSY
-                        retardo = 2.0
+                        retardo = 3.0 + extra
                     else:
-                        retardo = 1.0
+                        retardo = 2.0 + extra
 
                     self.engine._evento_reinicio_mic = Clock.schedule_once(
                         lambda dt: self.engine._reiniciar_escucha_android(), retardo
@@ -459,6 +487,8 @@ class SpeechEngine:
                         if matches and matches.size() > 0:
                             texto = str(matches.get(0)).strip()
                             print(f"[SpeechRecognizer Texto]: '{texto}'")
+                            self.engine._errores_mic_consecutivos = 0
+                            self.engine._ultimo_texto_parcial = ""
                             self.engine._procesar_texto_reconocido(texto, self.callback_cmd)
                     except Exception as e:
                         print(f"[SpeechRecognizer Error Resultados]: {e}")
@@ -480,7 +510,9 @@ class SpeechEngine:
                         matches = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if matches and matches.size() > 0 and self.callback_prc:
                             parcial = str(matches.get(0)).strip()
-                            Clock.schedule_once(lambda dt, p=parcial: self.callback_prc(p), 0)
+                            if parcial:
+                                self.engine._ultimo_texto_parcial = parcial
+                                Clock.schedule_once(lambda dt, p=parcial: self.callback_prc(p), 0)
                     except Exception:
                         pass
 
@@ -499,12 +531,13 @@ class SpeechEngine:
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-ES")
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
-
-                    # Preferir reconocimiento offline para evitar errores de red y reinicios frecuentes
                     try:
-                        self.intent_escucha.putExtra("android.speech.extra.PREFER_OFFLINE", True)
-                    except Exception:
-                        pass
+                        self.intent_escucha.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                        self.intent_escucha.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_MINIMUM_LENGTH_MILLIS, 1200)
+                        self.intent_escucha.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1600)
+                        self.intent_escucha.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1200)
+                    except Exception as extra_error:
+                        print(f"[SpeechEngine] Extras avanzados de voz no disponibles: {extra_error}")
 
                     self.speech_rec.startListening(self.intent_escucha)
                     print("[SpeechEngine UI Thread] SpeechRecognizer iniciado en Hilo UI.")
@@ -517,7 +550,7 @@ class SpeechEngine:
             print(f"[SpeechEngine Android Listener Error]: {e}")
 
     def _reiniciar_escucha_android(self):
-        """Reanuda la escucha del mic en Android. Mínimo 5s entre reinicios para evitar RECOGNIZER_BUSY."""
+        """Reanuda la escucha del mic en Android sin saturar SpeechRecognizer."""
         import time
 
         # Limpiar referencia al evento de Clock (ya disparó)
@@ -531,8 +564,8 @@ class SpeechEngine:
             print("[SpeechEngine] Reinicio del mic ignorado: ya hay uno en curso.")
             return
 
-        # Intervalo mínimo entre reinicios rápidos para escucha continua sin congelamientos
-        MIN_INTERVALO_REINICIO = 0.6
+        # Android no soporta una sesión infinita real; este margen evita RECOGNIZER_BUSY.
+        MIN_INTERVALO_REINICIO = 1.2
         ahora = time.time()
         tiempo_transcurrido = ahora - getattr(self, '_ultimo_reinicio_mic', 0)
         if tiempo_transcurrido < MIN_INTERVALO_REINICIO:
@@ -563,6 +596,10 @@ class SpeechEngine:
                 try:
                     SpeechRecognizer = autoclass('android.speech.SpeechRecognizer')
                     if hasattr(self, 'speech_rec') and self.speech_rec:
+                        try:
+                            self.speech_rec.cancel()
+                        except Exception:
+                            pass
                         try:
                             self.speech_rec.destroy()
                         except Exception:
@@ -708,4 +745,3 @@ class SpeechEngine:
             # Si se escuchó algo con longitud razonable, enviarlo para dar feedback siempre
             if len(texto_norm) >= 2:
                 Clock.schedule_once(lambda dt: callback_comando(texto_norm), 0)
-

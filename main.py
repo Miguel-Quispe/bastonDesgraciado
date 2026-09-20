@@ -188,11 +188,28 @@ class BastonApp(App):
             
             def callback_permisos(permissions, grants):
                 print(f"[BastonApp] Callback de permisos recibido: {grants}")
-                # Reiniciar escucha continua una vez concedidos los permisos
+                audio_concedido = True
+                try:
+                    for permiso, concedido in zip(permissions, grants):
+                        if str(permiso).endswith("RECORD_AUDIO"):
+                            if isinstance(concedido, bool):
+                                audio_concedido = concedido
+                            else:
+                                audio_concedido = int(concedido) == 0
+                            break
+                except Exception:
+                    pass
+
+                if not audio_concedido:
+                    self.lbl_estado.text = "Permiso de micrófono denegado. Actívalo para usar comandos de voz."
+                    self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes para usar comandos de voz.")
+                    return
+
+                # Iniciar la escucha solo después de tener permiso. El motor esperará si aún habla el TTS.
                 Clock.schedule_once(lambda dt: self.voz.iniciar_escucha_continua(
                     callback_comando=self.procesar_comando_texto,
                     callback_parcial=self.al_recibir_parcial
-                ), 0.5)
+                ), 1.0)
 
             request_permissions(permisos, callback_permisos)
         except Exception as e:
@@ -236,13 +253,14 @@ class BastonApp(App):
         except Exception as e:
             print(f"[BastonApp] Error en bienvenida por voz: {e}")
 
-        try:
-            self.voz.iniciar_escucha_continua(
-                callback_comando=self.procesar_comando_texto,
-                callback_parcial=self.al_recibir_parcial
-            )
-        except Exception as e:
-            print(f"[BastonApp] Error iniciando escucha continua: {e}")
+        if not self.voz.activity:
+            try:
+                self.voz.iniciar_escucha_continua(
+                    callback_comando=self.procesar_comando_texto,
+                    callback_parcial=self.al_recibir_parcial
+                )
+            except Exception as e:
+                print(f"[BastonApp] Error iniciando escucha continua: {e}")
 
     def al_recibir_resultado_actividad(self, request_code, result_code, intent_data):
         """Recibe el resultado del micrófono nativo o de la cámara por Intent."""
