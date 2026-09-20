@@ -236,7 +236,7 @@ class BastonApp(App):
             print(f"[BastonApp] Error iniciando conexión Bluetooth automática: {e}")
 
     def al_recibir_resultado_actividad(self, request_code, result_code, intent_data):
-        """Recibe el resultado del micrófono nativo de Android por Intent."""
+        """Recibe el resultado del micrófono nativo o de la cámara por Intent."""
         if request_code == 1001 and result_code == -1 and intent_data:
             try:
                 from jnius import autoclass
@@ -249,6 +249,16 @@ class BastonApp(App):
                     self.voz._procesar_texto_reconocido(texto, self.procesar_comando_texto)
             except Exception as e:
                 print(f"[BastonApp Error Intent Result]: {e}")
+
+        elif request_code == 1002 and result_code == -1:
+            print("[BastonApp Camera Result]: Foto de entorno tomada con éxito. Procesando visión...")
+            self.lbl_estado.text = "Procesando foto del entorno..."
+            Clock.schedule_once(lambda dt: self.vision.procesar_foto_capturada(), 0.5)
+
+        elif request_code == 1003 and result_code == -1:
+            print("[BastonApp Camera Result]: Foto de documento tomada con éxito. Procesando lectura...")
+            self.lbl_estado.text = "Procesando lectura del documento..."
+            Clock.schedule_once(lambda dt: self.lector.procesar_foto_capturada(), 0.5)
 
     def al_presionar_boton_escucha(self, instance):
         """Activa el micrófono nativo de Android inmediatamente al tocar el botón."""
@@ -335,9 +345,9 @@ class BastonApp(App):
             return
 
         # NODO 4: Lectura de Documentos, Hojas y Etiquetas
-        if any(w in texto for w in ["leer", "lee", "lectura", "documento", "hoja", "etiqueta", "texto", "papel", "carta", "pagina"]):
-            self.voz.hablar("Capturando documento para lectura por voz.")
-            self.lector.capturar_y_leer(self.al_completar_lectura_documento)
+        if any(w in texto for w in ["leer", "lee", "lectura", "documento", "hoja", "etiqueta", "texto", "papel", "carta", "pagina", "revisa"]):
+            self.voz.hablar("Abriendo cámara para fotografiar y leer el documento.")
+            self.lector.capturar_y_leer(self.al_completar_lectura_documento, ai_assistant=self.ai)
             return
 
         # NODO 5: Ubicación GPS actual
@@ -407,8 +417,8 @@ class BastonApp(App):
             "mira", "mirar", "ver entorno", "ver camara", "ver foto", "camara", "foto", "fotografia",
             "obstaculo", "obstaculos", "objeto", "objetos", "analizar", "escaneo", "escanea", "que tenemos"
         ]):
-            self.voz.hablar("Analizando el entorno con la cámara.")
-            self.vision.capturar_y_analizar(self.al_completar_analisis_vision)
+            self.voz.hablar("Abriendo cámara para analizar el entorno.")
+            self.vision.capturar_y_analizar(self.al_completar_analisis_vision, ai_assistant=self.ai)
             return
 
         # NODO 10: Guardar Clave API de Gemini por Voz o Teclado

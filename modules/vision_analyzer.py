@@ -57,34 +57,80 @@ class VisionAnalyzer:
         else:
             print(f"[VisionAnalyzer] Aviso: Modelo '{self.ruta_modelo}' no encontrado. Se usará análisis de respaldo.")
 
-    def capturar_y_analizar(self, callback_resultado):
-        """Captura una fotografía y analiza obstáculos en tiempo real 100% offline."""
-        print("[VisionAnalyzer] Capturando y procesando imagen con YOLO Offline...")
-        
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        nombre_foto = f"captura_baston_{timestamp}.jpg"
-        
-        # En Android nativo se invoca el Intent de la Cámara
+    def capturar_y_analizar(self, callback_resultado, ai_assistant=None):
+        """Captura una fotografía del entorno y analiza obstáculos y objetos presentes."""
+        print("[VisionAnalyzer] Iniciando captura de cámara para análisis de entorno...")
+        self.callback_pendiente = callback_resultado
+        self.ai_assistant = ai_assistant
+
+        self.ruta_foto_pendiente = self._obtener_ruta_foto()
+
         if self.camara_disponible:
             try:
                 from jnius import autoclass
                 Intent = autoclass('android.content.Intent')
                 MediaStore = autoclass('android.provider.MediaStore')
+                File = autoclass('java.io.File')
+                Uri = autoclass('android.net.Uri')
+                StrictMode = autoclass('android.os.StrictMode')
+
+                # Desactivar restricciones de URI para pasar el archivo de fotos limpiamente
+                try:
+                    builder = autoclass('android.os.StrictMode$VmPolicy$Builder')()
+                    StrictMode.setVmPolicy(builder.build())
+                except Exception:
+                    pass
+
                 activity = self.PythonActivity.mActivity
-                
                 intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-                activity.startActivityForResult(intent, 1002)
                 
-                resultado = self._analizar_imagen_offline(nombre_foto)
-                callback_resultado(resultado)
+                foto_file = File(self.ruta_foto_pendiente)
+                uri_foto = Uri.fromFile(foto_file)
+                intent.putExtra(MediaStore.EXTRA_OUTPUT, uri_foto)
+
+                activity.startActivityForResult(intent, 1002)
+                print(f"[VisionAnalyzer] Intent de cámara de entorno lanzado. Guardando en: {self.ruta_foto_pendiente}")
                 return
             except Exception as e:
                 print(f"[VisionAnalyzer] Error al invocar cámara nativa: {e}")
 
-        # Fallback de desarrollo en PC
-        foto_prueba = "test_entorno.jpg" if os.path.exists("test_entorno.jpg") else nombre_foto
-        resultado = self._analizar_imagen_offline(foto_prueba)
-        callback_resultado(resultado)
+        # Fallback para entorno de desarrollo PC
+        self.procesar_foto_capturada()
+
+    def _obtener_ruta_foto(self):
+        """Genera una ruta persistente para guardar la foto capturada."""
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        nombre_foto = f"vision_captura_{timestamp}.jpg"
+        try:
+            if hasattr(self, 'PythonActivity') and self.PythonActivity:
+                dir_ext = self.PythonActivity.mActivity.getExternalFilesDir(None)
+                if dir_ext:
+                    return os.path.join(dir_ext.getAbsolutePath(), nombre_foto)
+        except Exception as e:
+            print(f"[VisionAnalyzer] Error al obtener dir externo: {e}")
+        return os.path.join(os.getcwd(), nombre_foto)
+
+    def procesar_foto_capturada(self):
+        """Se ejecuta al volver de la cámara de Android con la fotografía tomada."""
+        if not hasattr(self, 'callback_pendiente') or not self.callback_pendiente:
+            return
+
+        callback = self.callback_pendiente
+        self.callback_pendiente = None
+
+        ruta_foto = getattr(self, 'ruta_foto_pendiente', '')
+
+        # Si tenemos IA Gemini activa y foto existente, usamos Gemini Vision para análisis visual completo
+        if getattr(self, 'ai_assistant', None) and self.ai_assistant.api_key and os.path.exists(ruta_foto):
+            print("[VisionAnalyzer] Enviando fotografía del entorno a Gemini Vision para análisis...")
+            prompt = "Describe en 1 o 2 oraciones sencillas en español para una persona no vidente qué objetos, personas u obstáculos hay al frente en el camino."
+            self.ai_assistant.consultar_gemini_vision_async(
+                ruta_foto, prompt, 
+                lambda respuesta: callback(f"Visión: {respuesta}" if respuesta else self._analizar_imagen_offline(ruta_foto))
+            )
+        else:
+            resultado_local = self._analizar_imagen_offline(ruta_foto)
+            callback(resultado_local)
 
     def _analizar_imagen_offline(self, ruta_imagen):
         """Ejecuta inferencia con YOLO TFLite y genera una descripción espacial en español."""
@@ -100,8 +146,7 @@ class VisionAnalyzer:
         except Exception as e:
             print(f"[VisionAnalyzer] Error en inferencia TFLite: {e}")
 
-        # Análisis descriptivo predeterminado para pruebas
-        return "Visión: Cono de obra en el centro a 1.5 metros. Personas caminando a la izquierda. Camino transitable por la derecha."
+        return "Visión: Objeto detectado al frente. Mantén precaución al caminar."
 
     def _inferencia_tflite(self, ruta_imagen):
         """Preprocesa la imagen y ejecuta el grafo TFLite."""

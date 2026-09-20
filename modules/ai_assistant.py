@@ -144,3 +144,67 @@ class AIAssistant:
             return "No pude conectar con la IA de Gemini en este momento. Verifica tu conexión a internet o tu clave API."
 
         return "No recibí respuesta de Gemini."
+
+    def consultar_gemini_vision_async(self, ruta_imagen, prompt_instruccion, callback_respuesta):
+        """Analiza una fotografía utilizando la API de Gemini Vision en un hilo secundario."""
+        def _hilo_vision():
+            respuesta = self._consultar_gemini_vision_api(ruta_imagen, prompt_instruccion)
+            Clock.schedule_once(lambda dt: callback_respuesta(respuesta), 0)
+
+        threading.Thread(target=_hilo_vision, daemon=True).start()
+
+    def _consultar_gemini_vision_api(self, ruta_imagen, prompt_instruccion):
+        if not self.api_key:
+            return None
+
+        if not os.path.exists(ruta_imagen):
+            print(f"[AIAssistant Vision] Archivo de imagen no existe: {ruta_imagen}")
+            return None
+
+        try:
+            import base64
+            with open(ruta_imagen, "rb") as img_f:
+                b64_data = base64.b64encode(img_f.read()).decode("utf-8")
+
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={self.api_key}"
+
+            prompt_sistema = (
+                "Eres el asistente de visión de un bastón inteligente para personas no videntes. "
+                "Responde de forma clara, directa y muy concisa en 1 o 2 oraciones sencillas en español. "
+                "No uses viñetas, asteriscos, símbolos de marcado ni emojis, ya que tu respuesta se reproducirá por voz.\n\n"
+                f"Instrucción para esta imagen: {prompt_instruccion}"
+            )
+
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {"text": prompt_sistema},
+                            {
+                                "inlineData": {
+                                    "mimeType": "image/jpeg",
+                                    "data": b64_data
+                                }
+                            }
+                        ]
+                    }
+                ]
+            }
+
+            data_bytes = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(url, data=data_bytes, headers={"Content-Type": "application/json"})
+
+            with urllib.request.urlopen(req, timeout=12) as response:
+                if response.status == 200:
+                    res_json = json.loads(response.read().decode("utf-8"))
+                    candidates = res_json.get("candidates", [])
+                    if candidates:
+                        parts = candidates[0].get("content", {}).get("parts", [])
+                        if parts:
+                            txt = parts[0].get("text", "").strip()
+                            txt_limpio = txt.replace("*", "").replace("#", "").replace("-", " ")
+                            return txt_limpio
+        except Exception as e:
+            print(f"[AIAssistant Vision] Error al consultar Gemini Vision: {e}")
+
+        return None
