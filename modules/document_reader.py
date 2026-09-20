@@ -73,6 +73,13 @@ class DocumentReader:
             print(f"[DocumentReader] Error al obtener dir externo: {e}")
         return os.path.join(os.getcwd(), nombre_foto)
 
+    def cancelar_captura(self, mensaje):
+        """Informa una cancelación de la cámara sin dejar la orden pendiente."""
+        callback = self.callback_pendiente
+        self.callback_pendiente = None
+        if callback:
+            callback(mensaje)
+
     def procesar_foto_capturada(self):
         """Se ejecuta al volver de la cámara de Android con la fotografía tomada."""
         if not self.callback_pendiente:

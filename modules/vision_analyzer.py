@@ -23,6 +23,8 @@ class VisionAnalyzer:
         self._surface_texture = None
         self._picture_callback = None
         self._autofocus_callback = None
+        self._captura_en_progreso = False
+        self._esperando_resultado_intent = False
         self.ruta_modelo = ruta_modelo if os.path.isabs(ruta_modelo) else os.path.join(os.getcwd(), ruta_modelo)
         
         self._inicializar_camara()
@@ -71,6 +73,12 @@ class VisionAnalyzer:
         self.ruta_foto_pendiente = self._obtener_ruta_foto()
 
         if self.camara_disponible:
+            if not self._tiene_permiso_camara_android():
+                self.cancelar_captura(
+                    "No tengo permiso para usar la cámara. Actívalo en Ajustes de Android, Aplicaciones, Bastón Inteligente, Permisos."
+                )
+                return
+
             if self._capturar_foto_trasera_automatica():
                 print(f"[VisionAnalyzer] Captura automática con cámara trasera iniciada: {self.ruta_foto_pendiente}")
                 return
@@ -80,6 +88,26 @@ class VisionAnalyzer:
 
         # Fallback para entorno de desarrollo PC
         self.procesar_foto_capturada()
+
+    def _tiene_permiso_camara_android(self):
+        """Comprueba el permiso real antes de abrir la cámara en Android."""
+        try:
+            from android.permissions import check_permission, Permission
+            return bool(check_permission(Permission.CAMERA))
+        except Exception as e:
+            # En PC no existe el módulo android; la cámara ya se marcará como no disponible.
+            print(f"[VisionAnalyzer] No se pudo comprobar el permiso de cámara: {e}")
+            return False
+
+    def cancelar_captura(self, mensaje):
+        """Finaliza una captura que Android canceló o no pudo abrir."""
+        self._captura_en_progreso = False
+        self._esperando_resultado_intent = False
+        self._liberar_camara_android()
+        callback = getattr(self, 'callback_pendiente', None)
+        self.callback_pendiente = None
+        if callback:
+            Clock.schedule_once(lambda dt: callback(f"Visión: {mensaje}"), 0)
 
     def _seleccionar_camara_trasera(self, Camera, CameraInfo):
         """Devuelve el id de la cámara trasera; si falla, usa la cámara 0."""
@@ -151,6 +179,7 @@ class VisionAnalyzer:
                     except Exception as e:
                         print(f"[VisionAnalyzer] Error guardando foto automática: {e}")
                     finally:
+                        self.analyzer._captura_en_progreso = False
                         self.analyzer._liberar_camara_android()
                         Clock.schedule_once(lambda dt: self.analyzer.procesar_foto_capturada(), 0)
 
@@ -186,9 +215,11 @@ class VisionAnalyzer:
                     self._surface_texture = SurfaceTexture(10)
                     self._camara_android.setPreviewTexture(self._surface_texture)
                     self._camara_android.startPreview()
+                    self._captura_en_progreso = True
                     self._picture_callback = PictureCallback(self)
                     self._autofocus_callback = AutoFocusCallback(self)
                     Clock.schedule_once(lambda dt: self._enfocar_y_tomar_foto_android(), 0.9)
+                    Clock.schedule_once(lambda dt: self._verificar_tiempo_captura_automatica(), 8)
                 except Exception as e:
                     print(f"[VisionAnalyzer] Captura automática trasera no disponible: {e}")
                     self._liberar_camara_android()
@@ -199,6 +230,16 @@ class VisionAnalyzer:
         except Exception as e:
             print(f"[VisionAnalyzer] No se pudo preparar captura automática: {e}")
             return False
+
+    def _verificar_tiempo_captura_automatica(self):
+        """Evita que la orden de visión quede sin respuesta si el controlador de cámara se bloquea."""
+        if not self._captura_en_progreso or self._esperando_resultado_intent:
+            return
+        print("[VisionAnalyzer] La captura automática excedió el tiempo de espera.")
+        self._captura_en_progreso = False
+        self._liberar_camara_android()
+        if not self._abrir_camara_android_intent():
+            self.cancelar_captura("La cámara trasera no respondió. Cierra otras aplicaciones que usen la cámara e intenta otra vez.")
 
     def _ejecutar_en_hilo_ui_android(self, func):
         from jnius import autoclass, PythonJavaClass, java_method
@@ -279,6 +320,7 @@ class VisionAnalyzer:
             intent.putExtra(MediaStore.EXTRA_OUTPUT, uri_foto)
 
             activity.startActivityForResult(intent, 1002)
+            self._esperando_resultado_intent = True
             print(f"[VisionAnalyzer] Intent de cámara trasera lanzado. Guardando en: {self.ruta_foto_pendiente}")
             return True
         except Exception as e:
@@ -305,6 +347,8 @@ class VisionAnalyzer:
 
         callback = self.callback_pendiente
         self.callback_pendiente = None
+        self._captura_en_progreso = False
+        self._esperando_resultado_intent = False
 
         ruta_foto = getattr(self, 'ruta_foto_pendiente', '')
 

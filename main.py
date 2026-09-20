@@ -210,16 +210,20 @@ class BastonApp(App):
             def callback_permisos(permissions, grants):
                 print(f"[BastonApp] Callback de permisos recibido: {grants}")
                 audio_concedido = True
+                camara_concedida = True
                 try:
                     for permiso, concedido in zip(permissions, grants):
+                        permitido = concedido if isinstance(concedido, bool) else int(concedido) == 0
                         if str(permiso).endswith("RECORD_AUDIO"):
-                            if isinstance(concedido, bool):
-                                audio_concedido = concedido
-                            else:
-                                audio_concedido = int(concedido) == 0
-                            break
+                            audio_concedido = permitido
+                        elif str(permiso).endswith("CAMERA"):
+                            camara_concedida = permitido
                 except Exception:
                     pass
+
+                self.permiso_camara_concedido = camara_concedida
+                if not camara_concedida:
+                    print("[BastonApp] Permiso de cámara denegado.")
 
                 if not audio_concedido:
                     self.lbl_estado.text = "Permiso de micrófono denegado. Actívalo para usar comandos de voz."
@@ -307,6 +311,12 @@ class BastonApp(App):
             print("[BastonApp Camera Result]: Foto de documento tomada con éxito. Procesando lectura...")
             self.lbl_estado.text = "Procesando lectura del documento..."
             Clock.schedule_once(lambda dt: self.lector.procesar_foto_capturada(), 0.5)
+
+        elif request_code == 1002:
+            self.vision.cancelar_captura("No pude abrir la cámara trasera. Activa el permiso de cámara en Ajustes y vuelve a intentar.")
+
+        elif request_code == 1003:
+            self.lector.cancelar_captura("No pude abrir la cámara para leer el documento.")
 
     def al_presionar_boton_escucha(self, instance):
         """Re-sincroniza silenciosamente el micrófono de fondo si fue pausado."""

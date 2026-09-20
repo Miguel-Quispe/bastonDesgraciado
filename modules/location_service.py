@@ -1,7 +1,13 @@
 import math
+import time
 import requests
 
 class LocationService:
+    # Punto de respaldo y centro de búsqueda de la aplicación.
+    SANTA_CRUZ_LAT = -17.7833
+    SANTA_CRUZ_LON = -63.1821
+    MAX_EDAD_UBICACION_MS = 10 * 60 * 1000
+
     def __init__(self, api_key_mapbox="pk.eyJ1IjoiZGVtb3VzZXIiLCJhIjoiY2xleGFtcGxlMDAwMDAwMDAwMDAwMDAwMCJ9.example"):
         self.api_key = api_key_mapbox
         self.navegacion_activa = False
@@ -19,20 +25,23 @@ class LocationService:
             activity = PythonActivity.mActivity
             
             location_manager = activity.getSystemService(Context.LOCATION_SERVICE)
-            location = location_manager.getLastKnownLocation('gps')
+            ubicaciones = [
+                location_manager.getLastKnownLocation('gps'),
+                location_manager.getLastKnownLocation('network'),
+            ]
+            ubicaciones = [ubicacion for ubicacion in ubicaciones if ubicacion]
+            if ubicaciones:
+                location = max(ubicaciones, key=lambda ubicacion: ubicacion.getTime())
+                edad_ms = int(time.time() * 1000) - int(location.getTime())
+                if edad_ms <= self.MAX_EDAD_UBICACION_MS:
+                    return location.getLatitude(), location.getLongitude()
+                print(f"[LocationService] Ubicación guardada demasiado antigua ({edad_ms} ms).")
             
-            if location is None:
-                # Si GPS no responde, intentar con red/wifi
-                location = location_manager.getLastKnownLocation('network')
-
-            if location:
-                return location.getLatitude(), location.getLongitude()
-            
-            print("[LocationService] GPS nativo sin última ubicación conocida. Utilizando coordenadas de respaldo.")
-            return -17.7833, -63.1821
+            print("[LocationService] GPS nativo sin ubicación reciente. Usando Santa Cruz de la Sierra como respaldo.")
+            return self.SANTA_CRUZ_LAT, self.SANTA_CRUZ_LON
         except Exception as e:
-            print(f"[LocationService] Lectura GPS nativa no disponible ({e}). Usando coordenadas de simulación.")
-            return -17.7833, -63.1821
+            print(f"[LocationService] Lectura GPS nativa no disponible ({e}). Usando Santa Cruz de la Sierra como respaldo.")
+            return self.SANTA_CRUZ_LAT, self.SANTA_CRUZ_LON
 
     def consultar_direccion_mapbox(self, lat, lon):
         """Geocodificación inversa llamando al API Geocoding de Mapbox o Nominatim."""
@@ -65,8 +74,13 @@ class LocationService:
         """Busca un lugar por nombre y lo configura como destino activo."""
         print(f"[LocationService] Buscando destino: {nombre_lugar}...")
         try:
-            # Búsqueda geográfica mediante Nominatim centrada en el país/zona actual
-            url = f"https://nominatim.openstreetmap.org/search?q={requests.utils.quote(nombre_lugar)}&format=json&limit=1&accept-language=es"
+            # Restringir destinos a Bolivia y priorizar Santa Cruz para evitar coincidencias en España.
+            consulta = f"{nombre_lugar}, Santa Cruz de la Sierra, Bolivia"
+            url = (
+                "https://nominatim.openstreetmap.org/search?"
+                f"q={requests.utils.quote(consulta)}&format=json&limit=1&accept-language=es"
+                "&countrycodes=bo&viewbox=-63.30,-17.70,-63.05,-17.90&bounded=1"
+            )
             headers = {"User-Agent": "BastonInteligente/1.0"}
             res = requests.get(url, headers=headers, timeout=6)
             
