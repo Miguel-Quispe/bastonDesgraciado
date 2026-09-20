@@ -80,6 +80,28 @@ class BluetoothManager:
             self.conectado = False
             return False
 
+    def iniciar_auto_reconexion(self, callback_alerta, callback_estado=None):
+        """Inicia un hilo en segundo plano que reintenta conectar automáticamente al Bastón cada 6 segundos."""
+        self._callback_alerta = callback_alerta
+        self._callback_estado = callback_estado
+
+        if hasattr(self, '_hilo_auto_reconexion') and self._hilo_auto_reconexion.is_alive():
+            return
+
+        def loop_auto():
+            while True:
+                if not self.conectado and not self.conectando:
+                    print("[BluetoothManager Auto] Intentando conectar automáticamente al Bastón ESP32...")
+                    exito = self.conectar()
+                    if exito:
+                        if self._callback_estado:
+                            self._callback_estado("Conectado al Bastón ESP32 (30:C9:22:32:F5:D6)")
+                        self.escuchar_alertas_baston(self._callback_alerta, self._callback_estado)
+                time.sleep(6)
+
+        self._hilo_auto_reconexion = threading.Thread(target=loop_auto, daemon=True)
+        self._hilo_auto_reconexion.start()
+
     def conectar_async(self, callback_resultado=None):
         """Ejecuta la conexión en un hilo secundario para evitar cualquier congelamiento de la app."""
         if self.conectando:

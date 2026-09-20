@@ -427,12 +427,11 @@ class SpeechEngine:
                       5=CLIENT          6=SPEECH_TIMEOUT  7=NO_MATCH
                       8=RECOGNIZER_BUSY  9=INSUFFICIENT_PERMISSIONS
                     """
-                    print(f"[SpeechRecognizer] Error código {error}.")
+                    print(f"[SpeechRecognizer] Evento micrófono código {error}.")
 
                     if not self.engine.escuchando or getattr(self.engine, 'reproduciendo_tts', False):
-                        return  # No reiniciar si estamos en silencio o el TTS está hablando
+                        return  # No reiniciar si el TTS está hablando
 
-                    # Cancelar cualquier reinicio anterior pendiente antes de programar uno nuevo
                     if self.engine._evento_reinicio_mic is not None:
                         try:
                             self.engine._evento_reinicio_mic.cancel()
@@ -440,15 +439,14 @@ class SpeechEngine:
                             pass
                         self.engine._evento_reinicio_mic = None
 
-                    # Error 8 = RECOGNIZER_BUSY: el mic anterior aún no se liberó → esperar más
-                    if error == 8:
-                        retardo = 7.0
-                    elif error in [6, 7]:   # SPEECH_TIMEOUT / NO_MATCH: normal, espera moderada
-                        retardo = 4.0
-                    elif error in [1, 2]:   # NETWORK_TIMEOUT / NETWORK: red lenta
-                        retardo = 5.0
+                    # Errores 6 (SPEECH_TIMEOUT) y 7 (NO_MATCH) son normales cuando nadie habla.
+                    # Se reinicia inmediatamente en 0.4s para mantener la escucha continua sin pausas.
+                    if error in [6, 7]:
+                        retardo = 0.4
+                    elif error == 8:   # RECOGNIZER_BUSY
+                        retardo = 2.0
                     else:
-                        retardo = 5.0
+                        retardo = 1.0
 
                     self.engine._evento_reinicio_mic = Clock.schedule_once(
                         lambda dt: self.engine._reiniciar_escucha_android(), retardo
@@ -465,17 +463,15 @@ class SpeechEngine:
                     except Exception as e:
                         print(f"[SpeechRecognizer Error Resultados]: {e}")
                     
-                    # Solo reiniciar el mic si el TTS NO esta activo.
-                    # Si el TTS esta hablando, el UtteranceProgressListener reactivara el mic en onDone.
+                    # Reinicio rápido tras procesar el resultado de voz
                     if self.engine.escuchando and not getattr(self.engine, 'reproduciendo_tts', False):
-                        # Cancelar reinicio anterior si hubiera uno pendiente
                         if self.engine._evento_reinicio_mic is not None:
                             try:
                                 self.engine._evento_reinicio_mic.cancel()
                             except Exception:
                                 pass
                         self.engine._evento_reinicio_mic = Clock.schedule_once(
-                            lambda dt: self.engine._reiniciar_escucha_android(), 2.5
+                            lambda dt: self.engine._reiniciar_escucha_android(), 0.8
                         )
 
                 @java_method('(Landroid/os/Bundle;)V')
@@ -535,8 +531,8 @@ class SpeechEngine:
             print("[SpeechEngine] Reinicio del mic ignorado: ya hay uno en curso.")
             return
 
-        # Intervalo mínimo entre reinicios para no saturar el SpeechRecognizer
-        MIN_INTERVALO_REINICIO = 5.0
+        # Intervalo mínimo entre reinicios rápidos para escucha continua sin congelamientos
+        MIN_INTERVALO_REINICIO = 0.6
         ahora = time.time()
         tiempo_transcurrido = ahora - getattr(self, '_ultimo_reinicio_mic', 0)
         if tiempo_transcurrido < MIN_INTERVALO_REINICIO:

@@ -119,10 +119,10 @@ class BastonApp(App):
         self.btn_config.bind(on_press=self.al_toggle_panel_api)
         self.layout.add_widget(self.btn_config)
 
-        # ── Botón principal de escucha ────────────────────────────────────────
+        # ── Botón principal indicador de escucha continua ─────────────────────
         self.btn_accion = Button(
-            text="🎤 ESCUCHA ACTIVA\n(Toca para hablar)",
-            font_size='22sp',
+            text="🎤 ESCUCHA CONTINUA ACTIVA\n(100% Automático - Habla libremente)",
+            font_size='20sp',
             bold=True,
             size_hint=(1, 0.30),
             background_normal='',
@@ -185,7 +185,16 @@ class BastonApp(App):
                 permisos.append(Permission.BLUETOOTH_SCAN)
             except AttributeError:
                 pass
-            request_permissions(permisos)
+            
+            def callback_permisos(permissions, grants):
+                print(f"[BastonApp] Callback de permisos recibido: {grants}")
+                # Reiniciar escucha continua una vez concedidos los permisos
+                Clock.schedule_once(lambda dt: self.voz.iniciar_escucha_continua(
+                    callback_comando=self.procesar_comando_texto,
+                    callback_parcial=self.al_recibir_parcial
+                ), 0.5)
+
+            request_permissions(permisos, callback_permisos)
         except Exception as e:
             print(f"[BastonApp] Permisos nativos no aplicados: {e}")
 
@@ -213,8 +222,14 @@ class BastonApp(App):
         except Exception as e:
             print(f"[BastonApp] Fallback vinculo actividad: {e}")
 
+        # Iniciar reconexión automática en segundo plano para el Bastón ESP32 (0 botones requeridos)
+        try:
+            self.bt.iniciar_auto_reconexion(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
+        except Exception as e:
+            print(f"[BastonApp] Error iniciando auto-reconexión Bluetooth: {e}")
+
         nombre_actual = self.voz.nombre_asistente.capitalize()
-        mensaje_bienvenida = f"Aplicación iniciada. Asistente activo con el nombre {nombre_actual}. Te escucho. Puedes decir tu comando directamente."
+        mensaje_bienvenida = f"Aplicación iniciada. Asistente activo. Te escucho."
         
         try:
             self.voz.hablar(mensaje_bienvenida)
@@ -228,12 +243,6 @@ class BastonApp(App):
             )
         except Exception as e:
             print(f"[BastonApp] Error iniciando escucha continua: {e}")
-
-        # Intentar conectar automáticamente al Bastón ESP32 al iniciar la app
-        try:
-            self.bt.conectar_async(self.al_completar_conexion_baston)
-        except Exception as e:
-            print(f"[BastonApp] Error iniciando conexión Bluetooth automática: {e}")
 
     def al_recibir_resultado_actividad(self, request_code, result_code, intent_data):
         """Recibe el resultado del micrófono nativo o de la cámara por Intent."""
@@ -261,8 +270,8 @@ class BastonApp(App):
             Clock.schedule_once(lambda dt: self.lector.procesar_foto_capturada(), 0.5)
 
     def al_presionar_boton_escucha(self, instance):
-        """Activa el micrófono nativo de Android inmediatamente al tocar el botón."""
-        self.voz.solicitar_voz_android()
+        """Re-sincroniza silenciosamente el micrófono de fondo si fue pausado."""
+        self.voz._reiniciar_escucha_android()
 
     def al_recibir_parcial(self, texto_parcial):
         """Muestra texto en tiempo real conforme el usuario va hablando."""

@@ -7,7 +7,18 @@ import threading
 from kivy.clock import Clock
 
 def _directorio_datos_app():
-    """Devuelve el directorio de datos persistente: user_data_dir en Android, cwd en PC."""
+    """Devuelve el directorio de datos persistente seguro para Android y PC."""
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        activity = PythonActivity.mActivity
+        if activity:
+            files_dir = activity.getFilesDir()
+            if files_dir:
+                return files_dir.getAbsolutePath()
+    except Exception:
+        pass
+
     try:
         from kivy.app import App
         app = App.get_running_app()
@@ -15,18 +26,14 @@ def _directorio_datos_app():
             return app.user_data_dir
     except Exception:
         pass
+
     return os.getcwd()
 
 class AIAssistant:
     def __init__(self):
-        # La ruta se resuelve en tiempo de uso para que user_data_dir ya esté disponible
         self._config_nombre = "config_gemini.json"
-        # No hardcodeamos la clave en el código fuente por seguridad.
-        # La clave se carga desde config_gemini.json (en user_data_dir en Android)
-        # o desde la variable de entorno GEMINI_API_KEY.
         self.api_key_defecto = ""
         self.api_key = self._cargar_api_key()
-
 
     @property
     def archivo_config(self):
@@ -43,20 +50,21 @@ class AIAssistant:
                     data = json.load(f)
                     key_conf = data.get("api_key", "").strip()
                     if key_conf:
+                        print(f"[AIAssistant] API Key cargada correctamente de config ({key_conf[:6]}...)")
                         return key_conf
         except Exception as e:
             print(f"[AIAssistant] Error al cargar config API Key: {e}")
         return self.api_key_defecto
-
 
     def guardar_api_key(self, nueva_key):
         """Guarda la API Key de forma persistente."""
         key_limpia = nueva_key.strip()
         self.api_key = key_limpia
         try:
-            with open(self.archivo_config, "w", encoding="utf-8") as f:
+            ruta = self.archivo_config
+            with open(ruta, "w", encoding="utf-8") as f:
                 json.dump({"api_key": key_limpia}, f, ensure_ascii=False)
-            print("[AIAssistant] Clave API de Gemini guardada correctamente.")
+            print(f"[AIAssistant] Clave API guardada en: {ruta}")
             return True
         except Exception as e:
             print(f"[AIAssistant] Error al guardar config API Key: {e}")
@@ -101,12 +109,12 @@ class AIAssistant:
         threading.Thread(target=_hilo_gemini, daemon=True).start()
 
     def _consultar_gemini_api(self, pregunta_texto):
-        """Realiza la petición HTTP REST a Gemini Flash."""
-        if not self.api_key:
-            return "Puedo decirte la hora, la fecha, tu ubicación, leer documentos o consultar tu agenda. Si deseas hacerme cualquier pregunta libre, guarda tu clave API de Gemini diciendo 'guardar clave API' seguido de tu clave."
+        """Realiza la petición HTTP REST a Gemini Flash con modelos de respaldo."""
+        key = self.api_key or self._cargar_api_key()
+        if not key:
+            return "Puedo decirte la hora, la fecha, tu ubicación, leer documentos o consultar tu agenda. Guarda tu clave API de Gemini desplegando el panel de configuración."
 
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={self.api_key}"
-
+        modelos = ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-flash-latest"]
         
         prompt_sistema = (
             "Eres el asistente de voz de un bastón inteligente para personas no videntes. "
@@ -126,24 +134,26 @@ class AIAssistant:
         }
 
         data_bytes = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(url, data=data_bytes, headers={"Content-Type": "application/json"})
 
-        try:
-            with urllib.request.urlopen(req, timeout=9) as response:
-                if response.status == 200:
-                    res_json = json.loads(response.read().decode("utf-8"))
-                    candidates = res_json.get("candidates", [])
-                    if candidates:
-                        parts = candidates[0].get("content", {}).get("parts", [])
-                        if parts:
-                            txt = parts[0].get("text", "").strip()
-                            txt_limpio = txt.replace("*", "").replace("#", "").replace("-", " ")
-                            return txt_limpio
-        except Exception as e:
-            print(f"[AIAssistant] Error al consultar Gemini API: {e}")
-            return "No pude conectar con la IA de Gemini en este momento. Verifica tu conexión a internet o tu clave API."
+        for model in modelos:
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+            req = urllib.request.Request(url, data=data_bytes, headers={"Content-Type": "application/json"})
+            try:
+                with urllib.request.urlopen(req, timeout=9) as response:
+                    if response.status == 200:
+                        res_json = json.loads(response.read().decode("utf-8"))
+                        candidates = res_json.get("candidates", [])
+                        if candidates:
+                            parts = candidates[0].get("content", {}).get("parts", [])
+                            if parts:
+                                txt = parts[0].get("text", "").strip()
+                                txt_limpio = txt.replace("*", "").replace("#", "").replace("-", " ")
+                                return txt_limpio
+            except Exception as e:
+                print(f"[AIAssistant] Error consultando {model}: {e}")
+                continue
 
-        return "No recibí respuesta de Gemini."
+        return "No se pudo conectar con la IA de Gemini. Verifica que tu clave API sea válida (comienza por AIza) y tengas conexión a internet."
 
     def consultar_gemini_vision_async(self, ruta_imagen, prompt_instruccion, callback_respuesta):
         """Analiza una fotografía utilizando la API de Gemini Vision en un hilo secundario."""
