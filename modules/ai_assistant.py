@@ -5,6 +5,8 @@ import urllib.request
 import urllib.parse
 import urllib.error
 import threading
+import socket
+import ssl
 from kivy.clock import Clock
 
 def _directorio_datos_app():
@@ -144,8 +146,16 @@ class AIAssistant:
         }
         return urllib.request.Request(url, data=data_bytes, headers=headers), timeout_segundos
 
-    def _leer_respuesta_gemini(self, response):
-        res_json = json.loads(response.read().decode("utf-8"))
+    def _url_gemini(self, model):
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+
+    def _headers_gemini(self):
+        return {
+            "Content-Type": "application/json",
+            "x-goog-api-key": self.limpiar_api_key(self.api_key or self._cargar_api_key()),
+        }
+
+    def _extraer_texto_respuesta(self, res_json):
         candidates = res_json.get("candidates", [])
         if not candidates:
             return ""
@@ -154,6 +164,33 @@ class AIAssistant:
             return ""
         txt = parts[0].get("text", "").strip()
         return txt.replace("*", "").replace("#", "").replace("-", " ")
+
+    def _leer_respuesta_gemini(self, response):
+        res_json = json.loads(response.read().decode("utf-8"))
+        return self._extraer_texto_respuesta(res_json)
+
+    def _post_gemini(self, model, payload, timeout_segundos=9):
+        """Hace la llamada a Gemini con requests; urllib queda como respaldo."""
+        url = self._url_gemini(model)
+        headers = self._headers_gemini()
+
+        try:
+            import requests
+            response = requests.post(url, json=payload, headers=headers, timeout=timeout_segundos)
+            if response.status_code == 200:
+                return self._extraer_texto_respuesta(response.json())
+
+            self.ultimo_error_config = self._mensaje_error_api(response.status_code, response.text)
+            print(f"[AIAssistant] Error Gemini {model}: HTTP {response.status_code} - {response.text}")
+            return ""
+        except Exception as requests_error:
+            print(f"[AIAssistant] requests falló en {model}: {requests_error}. Intentando urllib...")
+
+        req, timeout_urllib = self._crear_request_gemini(model, payload, timeout_segundos=timeout_segundos)
+        with urllib.request.urlopen(req, timeout=timeout_urllib) as response:
+            if response.status == 200:
+                return self._leer_respuesta_gemini(response)
+        return ""
 
     def _registrar_error_gemini(self, contexto, error):
         if isinstance(error, urllib.error.HTTPError):
@@ -164,8 +201,24 @@ class AIAssistant:
             self.ultimo_error_config = self._mensaje_error_api(error.code, detalle)
             print(f"[AIAssistant] Error Gemini {contexto}: HTTP {error.code} - {detalle}")
         else:
-            self.ultimo_error_config = "No hay conexión con Gemini. Revisa internet en el celular."
+            self.ultimo_error_config = self._mensaje_error_conexion(error)
             print(f"[AIAssistant] Error Gemini {contexto}: {error}")
+
+    def _mensaje_error_conexion(self, error):
+        texto = str(error).lower()
+        reason = getattr(error, "reason", None)
+        if reason:
+            texto = f"{texto} {reason}".lower()
+
+        if isinstance(error, (socket.timeout, TimeoutError)) or "timed out" in texto or "timeout" in texto:
+            return "Gemini tardó demasiado en responder. Revisa la señal WiFi o intenta otra vez."
+        if isinstance(error, ssl.SSLError) or "certificate" in texto or "ssl" in texto:
+            return "El celular no pudo validar el certificado HTTPS de Google. Revisa fecha, hora y certificados del dispositivo."
+        if "name or service not known" in texto or "temporary failure in name resolution" in texto or "dns" in texto:
+            return "El celular no pudo resolver la dirección de Google. Revisa DNS o el WiFi."
+        if "network is unreachable" in texto or "no route to host" in texto or "failed to establish" in texto:
+            return "El WiFi está conectado, pero Android no puede salir a internet desde la app."
+        return f"No se pudo conectar con Gemini. Error técnico: {str(error)[:90]}"
 
     def _mensaje_error_api(self, codigo, detalle=""):
         texto = str(detalle).lower()
@@ -263,12 +316,9 @@ class AIAssistant:
 
         for model in modelos:
             try:
-                req, timeout_segundos = self._crear_request_gemini(model, payload, timeout_segundos=9)
-                with urllib.request.urlopen(req, timeout=timeout_segundos) as response:
-                    if response.status == 200:
-                        txt_limpio = self._leer_respuesta_gemini(response)
-                        if txt_limpio:
-                            return txt_limpio
+                txt_limpio = self._post_gemini(model, payload, timeout_segundos=9)
+                if txt_limpio:
+                    return txt_limpio
             except Exception as e:
                 self._registrar_error_gemini(model, e)
                 continue
@@ -321,12 +371,9 @@ class AIAssistant:
 
             for model in ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.7-flash"]:
                 try:
-                    req, timeout_segundos = self._crear_request_gemini(model, payload, timeout_segundos=12)
-                    with urllib.request.urlopen(req, timeout=timeout_segundos) as response:
-                        if response.status == 200:
-                            txt_limpio = self._leer_respuesta_gemini(response)
-                            if txt_limpio:
-                                return txt_limpio
+                    txt_limpio = self._post_gemini(model, payload, timeout_segundos=12)
+                    if txt_limpio:
+                        return txt_limpio
                 except Exception as e:
                     self._registrar_error_gemini(f"vision {model}", e)
         except Exception as e:
