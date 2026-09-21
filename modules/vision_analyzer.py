@@ -113,7 +113,13 @@ class VisionAnalyzer:
 
             def iniciar():
                 try:
-                    self._detector_gesto = Detector(PythonActivity.mActivity)
+                    ruta_modelo_gesto = os.path.join(
+                        PythonActivity.mActivity.getFilesDir().getAbsolutePath(),
+                        "app", "models", "hand_landmarker.task"
+                    )
+                    if not os.path.exists(ruta_modelo_gesto):
+                        raise RuntimeError(f"No se encontró el modelo local de manos: {ruta_modelo_gesto}")
+                    self._detector_gesto = Detector(PythonActivity.mActivity, ruta_modelo_gesto)
                     camera_id = self._seleccionar_camara_trasera(Camera, CameraInfo)
                     self._camara_gesto = Camera.open(camera_id)
                     params = self._camara_gesto.getParameters()

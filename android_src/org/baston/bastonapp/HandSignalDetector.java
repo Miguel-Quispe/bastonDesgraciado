@@ -20,9 +20,10 @@ import java.util.List;
 public final class HandSignalDetector {
     private final HandLandmarker landmarker;
 
-    public HandSignalDetector(Context context) {
+    public HandSignalDetector(Context context, String modelPath) {
         BaseOptions baseOptions = BaseOptions.builder()
-                .setModelAssetPath("models/hand_landmarker.task")
+                // python-for-android instala este modelo como archivo privado, no en assets/.
+                .setModelAssetPath(modelPath)
                 .build();
         HandLandmarker.HandLandmarkerOptions options = HandLandmarker.HandLandmarkerOptions.builder()
                 .setBaseOptions(baseOptions)
