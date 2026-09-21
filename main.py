@@ -1,4 +1,5 @@
 import os
+import time
 try:
     import qrcode
 except ImportError:
@@ -38,6 +39,7 @@ class BastonApp(App):
         self.ai = AIAssistant()
         self.evento_navegacion = None
         self._wake_lock = None
+        self._camara_en_uso_por_comando = False
 
         self.layout = BoxLayout(
             orientation='vertical',
@@ -287,7 +289,7 @@ class BastonApp(App):
                 print(f"[BastonApp] Error iniciando escucha continua: {e}")
 
     def iniciar_control_por_gesto(self):
-        if not self.voz.activity:
+        if not self.voz.activity or self._camara_en_uso_por_comando:
             return
         iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
         if iniciado:
@@ -302,13 +304,27 @@ class BastonApp(App):
         Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.45)
 
     def _abrir_comando_por_gesto(self):
-        if self.voz.escuchar_una_vez(self.procesar_comando_texto, self.iniciar_control_por_gesto):
+        if self.voz.escuchar_una_vez(self.procesar_comando_texto, self.programar_reinicio_control_por_gesto):
             self.lbl_estado.text = "Micrófono activo. Di tu comando."
             # La vibración sucede cuando la escucha ya fue solicitada, no cuando se detecta la palma.
             self.emitir_vibracion_bienvenida()
         else:
             self.lbl_estado.text = "Micrófono ocupado. Vuelve a mostrar la palma abierta."
             Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
+
+    def programar_reinicio_control_por_gesto(self):
+        """Evita que detector de palma y captura de foto abran la cámara a la vez."""
+        # Primero dejamos que procesar_comando_texto inicie la acción solicitada.
+        Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), 0.25)
+
+    def _reanudar_control_por_gesto_si_libre(self):
+        if self._camara_en_uso_por_comando:
+            return
+        espera_voz = getattr(self.voz, '_bloqueo_eco_hasta', 0.0) - time.monotonic()
+        if espera_voz > 0:
+            Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), espera_voz + 0.25)
+            return
+        self.iniciar_control_por_gesto()
 
     def mantener_activa_con_pantalla_apagada(self):
         """Mantiene el procesador activo para voz y Bluetooth aunque se apague la pantalla."""
@@ -451,6 +467,7 @@ class BastonApp(App):
         # NODO 4: Lectura de Documentos, Hojas y Etiquetas
         if any(w in texto for w in ["leer", "lee", "lectura", "documento", "hoja", "etiqueta", "texto", "papel", "carta", "pagina", "revisa"]):
             self.vision.detener_detector_gesto()
+            self._camara_en_uso_por_comando = True
             self.voz.hablar("Abriendo cámara para fotografiar y leer el documento.")
             self.lector.capturar_y_leer(self.al_completar_lectura_documento, ai_assistant=self.ai)
             return
@@ -525,6 +542,7 @@ class BastonApp(App):
             "obstaculo", "obstaculos", "objeto", "objetos", "analizar", "escaneo", "escanea", "que tenemos"
         ]):
             self.vision.detener_detector_gesto()
+            self._camara_en_uso_por_comando = True
             self.lbl_estado.text = "Tomando foto del frente..."
             self.voz.hablar("Tomando foto del frente.")
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision, ai_assistant=self.ai)
@@ -628,14 +646,16 @@ class BastonApp(App):
         self.voz.hablar(mensaje_alerta)
 
     def al_completar_analisis_vision(self, resultado_texto):
+        self._camara_en_uso_por_comando = False
         self.lbl_estado.text = f"Visión: {resultado_texto}"
         self.voz.hablar(resultado_texto)
-        Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
+        self.programar_reinicio_control_por_gesto()
 
     def al_completar_lectura_documento(self, texto_leido):
+        self._camara_en_uso_por_comando = False
         self.lbl_estado.text = f"Lectura: {texto_leido}"
         self.voz.hablar(texto_leido)
-        Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
+        self.programar_reinicio_control_por_gesto()
 
     def generar_qr_compartir(self):
         if not qrcode:

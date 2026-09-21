@@ -23,9 +23,9 @@ La dirección MAC configurada para el bastón es `30:C9:22:32:F5:D6`.
 
 ## Forma de uso
 
-La versión 0.8 usa la cámara trasera para detectar una palma abierta sin internet. Tras dos detecciones consecutivas, libera la cámara, espera a que Android active el micrófono y emite una vibración. Entonces el usuario pronuncia un único comando. Al terminar, el micrófono se cierra y la cámara vuelve al modo de espera.
+La versión 0.9 usa la cámara trasera para detectar una palma abierta sin internet. Tras dos detecciones consecutivas, libera la cámara, espera a que Android active el micrófono y emite una vibración. Entonces el usuario pronuncia un único comando. Al terminar, el micrófono se cierra y la cámara vuelve al modo de espera.
 
-Este flujo evita mantener el micrófono abierto y reduce el riesgo de que el asistente escuche su propia voz.
+Este flujo evita mantener el micrófono abierto y reduce el riesgo de que el asistente escuche su propia voz. Durante una captura para leer o describir, el detector de gestos queda detenido para que dos funciones no intenten usar la cámara al mismo tiempo.
 
 ## Comandos
 
@@ -43,7 +43,7 @@ Este flujo evita mantener el micrófono abierto y reduce el riesgo de que el asi
 | Ubicación | `¿Dónde estoy?` | GPS; dirección normalmente requiere red | Implementado con respaldo en Santa Cruz, Bolivia. |
 | Navegación | `Guíame a la farmacia` | Sí, para buscar destino | Requiere validación en recorridos reales. |
 | Leer documento | `Lee este documento` | Gemini para lectura avanzada | La captura está implementada; OCR local completo no está empaquetado. |
-| Describir frente | `¿Qué tengo al frente?` | Gemini para descripción completa | Captura implementada; descripción avanzada requiere red. |
+| Describir frente | `¿Qué tengo al frente?` | No para objetos cotidianos; Gemini para detalle | EfficientDet Lite0 local identifica objetos comunes y su posición aproximada. Puertas, escalones, texto y escenas complejas pueden requerir Gemini. |
 | Pregunta libre | Pregunta normal | Sí | Usa Gemini con una clave válida. |
 
 ## Agenda local
@@ -58,7 +58,7 @@ El ESP32 calcula las distancias con sus sensores. La app no interpreta las dista
 
 ## Pruebas y limitaciones
 
-La versión 0.6 cerraba al cargar el modelo local de manos. La versión 0.7 corrigió la ruta del modelo. La versión 0.8 añade una espera entre liberar cámara y abrir micrófono, con una vibración que confirma el momento de hablar.
+La versión 0.6 cerraba al cargar el modelo local de manos. La versión 0.7 corrigió la ruta del modelo. La versión 0.8 añade una espera entre liberar cámara y abrir micrófono, con una vibración que confirma el momento de hablar. La versión 0.9 evita la competencia entre reconocimiento y captura de cámara e incorpora detección local de objetos.
 
 Pendiente de validar en el celular: gesto de palma, escucha única, alertas reales del ESP32, lectura de documentos, cámara de entorno y funcionamiento prolongado con pantalla apagada.
 

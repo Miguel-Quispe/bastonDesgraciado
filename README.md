@@ -28,8 +28,9 @@ Consulta [DOCUMENTACION_PROYECTO.md](DOCUMENTACION_PROYECTO.md) para el informe 
    - Permite solicitar rutas a destinos específicos por voz (ej. *"Guíame a la farmacia"*, *"Llévame al centro"*).
    - Calcula la distancia en metros (Haversine) y guía mediante rumbo cardinal (Norte, Sur, Este, Oeste).
 
-6. **👁️ Visión Artificial y Detección de Obstáculos Offline (YOLO / TFLite):**
-   - Análisis visual instantáneo usando modelos de **YOLOv8** para describir objetos y obstáculos cercanos en español.
+6. **👁️ Visión Artificial Local:**
+   - El modelo **EfficientDet Lite0** reconoce objetos cotidianos sin enviar la foto a Internet y comunica si están a la izquierda, al frente o a la derecha.
+   - Gemini es opcional y solo se usa cuando se necesita una descripción más detallada y hay conexión.
 
 7. **🦯 Conexión Bluetooth con Bastón Físico (ESP32):**
    - Conexión directa mediante puerto serie SPP con reconexión automática si se pierde la señal.
@@ -69,7 +70,7 @@ BASTON/
 │   ├── document_reader.py      # Captura y lectura por voz de documentos/hojas con la cámara
 │   ├── bluetooth_manager.py    # Conexión SPP con ESP32 y reconexión automática
 │   ├── speech_engine.py        # Motor Vosk offline, palabras clave dinámicas y TTS
-│   ├── vision_analyzer.py      # Inferencia YOLO/TFLite y descripción espacial
+│   ├── vision_analyzer.py      # Cámara, detección local y descripción espacial
 │   └── location_service.py     # Servicio GPS y geocodificación de ruta
 ├── main.py                     # Aplicación Kivy, interfaz accesible y orquestación
 ├── buildozer.spec              # Configuración de empaquetado para Android

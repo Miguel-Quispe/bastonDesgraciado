@@ -15,6 +15,7 @@ bin/
 # Modelos binarios grandes (Vosk ~45MB, YOLO, etc.)
 model/
 *.tflite
+!models/efficientdet_lite0.tflite
 vosk_model_es.zip
 config_asistente.json
 config_gemini.json

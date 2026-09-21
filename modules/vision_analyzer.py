@@ -34,6 +34,7 @@ class VisionAnalyzer:
         self._ultimo_cuadro_gesto = 0.0
         self._palmas_consecutivas = 0
         self._callback_gesto = None
+        self._detector_objetos_local = None
         self.ruta_modelo = ruta_modelo if os.path.isabs(ruta_modelo) else os.path.join(os.getcwd(), ruta_modelo)
         
         self._inicializar_camara()
@@ -496,7 +497,13 @@ class VisionAnalyzer:
             callback("Visión: No pude tomar la foto del frente. Revisa el permiso de cámara e intenta de nuevo.")
             return
 
-        # Si tenemos IA Gemini activa y foto existente, usamos Gemini Vision para análisis visual completo
+        # Primero analizar localmente. Así la respuesta habitual no depende de internet ni de Gemini.
+        resultado_local = self._analizar_imagen_offline(ruta_foto)
+        if resultado_local:
+            callback(resultado_local)
+            return
+
+        # Si no hubo detecciones locales, Gemini puede aportar una descripción más detallada.
         if getattr(self, 'ai_assistant', None) and self.ai_assistant.api_key:
             print("[VisionAnalyzer] Enviando fotografía del entorno a Gemini Vision para análisis...")
             prompt = (
@@ -511,8 +518,7 @@ class VisionAnalyzer:
                 )
             )
         else:
-            resultado_local = self._analizar_imagen_offline(ruta_foto)
-            callback(resultado_local)
+            callback("Visión: No pude identificar objetos en la foto sin conexión. Intenta acercar la cámara o mejorar la luz.")
 
     def _respuesta_vision_respaldo(self, ruta_foto):
         resultado_local = self._analizar_imagen_offline(ruta_foto)
@@ -525,6 +531,10 @@ class VisionAnalyzer:
         if not os.path.exists(ruta_imagen) and not self.interpreter:
             return "Visión: No pude capturar una foto del frente. Revisa el permiso de cámara e intenta otra vez."
 
+        resultado_mediapipe = self._analizar_objetos_mediapipe_local(ruta_imagen)
+        if resultado_mediapipe:
+            return resultado_mediapipe
+
         try:
             # Si el intérprete TFLite está activo, procesamos la imagen
             if self.interpreter and os.path.exists(ruta_imagen):
@@ -534,7 +544,28 @@ class VisionAnalyzer:
         except Exception as e:
             print(f"[VisionAnalyzer] Error en inferencia TFLite: {e}")
 
-        return "Visión: Objeto detectado al frente. Mantén precaución al caminar."
+        return ""
+
+    def _analizar_objetos_mediapipe_local(self, ruta_imagen):
+        """Usa EfficientDet dentro del APK para objetos cotidianos sin enviar fotos a internet."""
+        try:
+            if not self.camara_disponible or not os.path.exists(ruta_imagen):
+                return ""
+            from jnius import autoclass
+            actividad = self.PythonActivity.mActivity
+            ruta_modelo = os.path.join(
+                actividad.getFilesDir().getAbsolutePath(), "app", "models", "efficientdet_lite0.tflite"
+            )
+            if not os.path.exists(ruta_modelo):
+                print(f"[VisionAnalyzer] Modelo local de objetos no encontrado: {ruta_modelo}")
+                return ""
+            if not self._detector_objetos_local:
+                Detector = autoclass('org.baston.bastonapp.LocalObjectDetector')
+                self._detector_objetos_local = Detector(actividad, ruta_modelo)
+            return str(self._detector_objetos_local.describeImage(ruta_imagen)).strip()
+        except Exception as error:
+            print(f"[VisionAnalyzer] Detector local de objetos no disponible: {error}")
+            return ""
 
     def _inferencia_tflite(self, ruta_imagen):
         """Preprocesa la imagen y ejecuta el grafo TFLite."""
