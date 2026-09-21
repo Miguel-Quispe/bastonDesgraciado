@@ -29,7 +29,7 @@ Consulta [DOCUMENTACION_PROYECTO.md](DOCUMENTACION_PROYECTO.md) para el informe 
    - Calcula la distancia en metros (Haversine) y guía mediante rumbo cardinal (Norte, Sur, Este, Oeste).
 
 6. **👁️ Visión Artificial Local:**
-   - El modelo **EfficientDet Lite0** reconoce objetos cotidianos sin enviar la foto a Internet y comunica si están a la izquierda, al frente o a la derecha.
+   - El modelo **EfficientDet Lite0** reconoce personas, sillas, mochilas, libros, computadoras, teclados, celulares y otros objetos cotidianos sin enviar la foto a Internet. Comunica posición y cercanía aproximada.
    - Gemini es opcional y solo se usa cuando se necesita una descripción más detallada y hay conexión.
 
 7. **🦯 Conexión Bluetooth con Bastón Físico (ESP32):**

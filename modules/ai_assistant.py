@@ -176,7 +176,14 @@ class AIAssistant:
 
         try:
             import requests
-            response = requests.post(url, json=payload, headers=headers, timeout=timeout_segundos)
+            import certifi
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=timeout_segundos,
+                verify=certifi.where(),
+            )
             if response.status_code == 200:
                 return self._extraer_texto_respuesta(response.json())
 
@@ -295,7 +302,8 @@ class AIAssistant:
         if not self.es_api_key_gemini_valida(key):
             return "La clave guardada no parece ser de Gemini. Borra esa clave y pega una clave válida de Google AI Studio."
 
-        modelos = ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.7-flash"]
+        # Modelos actuales de Gemini. Se prueban en orden de rapidez y con respaldo.
+        modelos = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
         
         prompt_sistema = (
             "Eres el asistente de voz de un bastón inteligente para personas no videntes. "
@@ -369,7 +377,7 @@ class AIAssistant:
                 ]
             }
 
-            for model in ["gemini-flash-lite-latest", "gemini-3.1-flash-lite", "gemini-flash-latest", "gemini-3.7-flash"]:
+            for model in ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]:
                 try:
                     txt_limpio = self._post_gemini(model, payload, timeout_segundos=12)
                     if txt_limpio:

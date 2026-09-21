@@ -35,13 +35,19 @@ public final class LocalObjectDetector {
         TRADUCCIONES.put("dining table", "mesa");
         TRADUCCIONES.put("tv", "televisor");
         TRADUCCIONES.put("laptop", "computadora portátil");
+        TRADUCCIONES.put("keyboard", "teclado");
+        TRADUCCIONES.put("mouse", "ratón");
         TRADUCCIONES.put("cell phone", "celular");
         TRADUCCIONES.put("bottle", "botella");
         TRADUCCIONES.put("cup", "taza");
+        TRADUCCIONES.put("potted plant", "planta");
         TRADUCCIONES.put("backpack", "mochila");
         TRADUCCIONES.put("handbag", "bolso");
         TRADUCCIONES.put("suitcase", "maleta");
         TRADUCCIONES.put("book", "libro");
+        TRADUCCIONES.put("scissors", "tijeras");
+        TRADUCCIONES.put("clock", "reloj");
+        TRADUCCIONES.put("remote", "control remoto");
         TRADUCCIONES.put("dog", "perro");
         TRADUCCIONES.put("cat", "gato");
         TRADUCCIONES.put("stop sign", "señal de alto");
@@ -73,7 +79,7 @@ public final class LocalObjectDetector {
                 continue;
             }
             Category category = detection.categories().get(0);
-            if (category.score() < 0.45f) {
+            if (category.score() < 0.35f) {
                 continue;
             }
             if (included > 0) {
@@ -82,6 +88,7 @@ public final class LocalObjectDetector {
             String label = category.categoryName();
             message.append(TRADUCCIONES.containsKey(label) ? TRADUCCIONES.get(label) : label);
             message.append(" ").append(position(detection.boundingBox(), bitmap.getWidth()));
+            message.append(", ").append(distance(detection.boundingBox(), bitmap));
             included++;
             if (included == 3) {
                 break;
@@ -99,6 +106,17 @@ public final class LocalObjectDetector {
             return "a la derecha";
         }
         return "al frente";
+    }
+
+    private String distance(RectF box, Bitmap bitmap) {
+        float relativeArea = (box.width() * box.height()) / (bitmap.getWidth() * bitmap.getHeight());
+        if (relativeArea > 0.22f) {
+            return "muy cerca";
+        }
+        if (relativeArea > 0.07f) {
+            return "cerca";
+        }
+        return "a cierta distancia";
     }
 
     public void close() {

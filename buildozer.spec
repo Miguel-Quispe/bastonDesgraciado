@@ -21,10 +21,10 @@ source.exclude_dirs = tests,bin,.venv,.git,.github
 source.exclude_patterns = config_gemini.json,config_asistente.json,agenda_personal.json
 
 # (str) Application versioning (method 1)
-version = 0.9
+version = 1.0
 
 # (list) Application requirements
-requirements = python3,kivy,requests,pyjnius,pillow,qrcode
+requirements = python3,kivy,requests,certifi,pyjnius,pillow,qrcode
 
 # Detector local de palma abierta para activar una única escucha sin internet.
 android.add_src = android_src
