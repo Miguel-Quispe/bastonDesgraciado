@@ -589,7 +589,8 @@ class SpeechEngine:
 
                     self.intent_escucha = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-                    self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es")
+                    # Evita que Android cambie a es-BO, paquete offline que no está disponible en muchos equipos.
+                    self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-419")
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
                     try:
                         self.intent_escucha.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)

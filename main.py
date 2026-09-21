@@ -297,9 +297,17 @@ class BastonApp(App):
 
     def activar_comando_por_gesto(self):
         """La palma abierta habilita una única escucha, sin micrófono permanente."""
-        self.lbl_estado.text = "Gesto detectado. Di tu comando."
-        self.emitir_vibracion_bienvenida()
-        if not self.voz.escuchar_una_vez(self.procesar_comando_texto, self.iniciar_control_por_gesto):
+        self.lbl_estado.text = "Gesto detectado. Preparando micrófono..."
+        # Dar tiempo a Android para liberar físicamente la cámara antes de pedir AudioRecord.
+        Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.45)
+
+    def _abrir_comando_por_gesto(self):
+        if self.voz.escuchar_una_vez(self.procesar_comando_texto, self.iniciar_control_por_gesto):
+            self.lbl_estado.text = "Micrófono activo. Di tu comando."
+            # La vibración sucede cuando la escucha ya fue solicitada, no cuando se detecta la palma.
+            self.emitir_vibracion_bienvenida()
+        else:
+            self.lbl_estado.text = "Micrófono ocupado. Vuelve a mostrar la palma abierta."
             Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
     def mantener_activa_con_pantalla_apagada(self):

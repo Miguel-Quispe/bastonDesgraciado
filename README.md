@@ -1,6 +1,8 @@
 # 🦯 Bastón Inteligente - Asistente Autónomo Accesible para Personas con Discapacidad Visual
 
-Aplicación móvil Android de alto contraste y accesible desarrollada en **Python/Kivy** diseñada para otorgar autonomía a personas con discapacidad visual. El sistema es **100% autónomo y offline**, garantizando privacidad, rapidez y **cero consumo de datos móviles**.
+Aplicación móvil Android de alto contraste y accesible desarrollada en **Python/Kivy** diseñada para otorgar autonomía a personas con discapacidad visual. Las funciones locales priorizan el uso sin datos; Gemini, mapas y descripciones visuales avanzadas requieren internet.
+
+Consulta [DOCUMENTACION_PROYECTO.md](DOCUMENTACION_PROYECTO.md) para el informe técnico, el estado de comandos y las limitaciones conocidas.
 
 ---
 
@@ -36,13 +38,13 @@ Aplicación móvil Android de alto contraste y accesible desarrollada en **Pytho
 
 ## 🗣️ Guía de Comandos de Voz
 
-Al abrir la aplicación, el micrófono estará siempre activo. Puedes usar el nombre configurado o los comandos directos:
+En la versión actual una palma abierta frente a la cámara trasera activa una única escucha. También se puede usar el botón de la aplicación como alternativa táctil.
 
 | Función | Comandos de ejemplo | Qué hace la aplicación |
 | :--- | :--- | :--- |
 | **Cambiar Nombre** | *"Cambiar nombre a Rayo"*, *"Llámate Fénix"* | Cambia y guarda la palabra clave de activación de forma permanente. |
 | **Lectura de Documentos** | *"Lee esta hoja"*, *"Leer documento"*, *"Lee la etiqueta"* | Captura una foto del papel o envase y lee todo su texto por voz. |
-| **Anotar Recordatorio** | *"Anotar tomar medicina a las 8"*, *"Agendar cita"* | Agrega un nuevo evento a tu agenda personal guardado en el teléfono. |
+| **Anotar Recordatorio** | *"Guardar tomar medicina hasta el 25 de septiembre de 2027"* | Guarda un recordatorio local con fecha de creación y vencimiento. |
 | **Consultar Agenda** | *"Ver agenda"*, *"¿Qué tengo agendado?"*, *"Mis recordatorios"* | Lee todos los eventos y notas agendados en voz alta. |
 | **Limpiar Agenda** | *"Borrar agenda"*, *"Limpiar recordatorios"* | Elimina los recordatorios de tu agenda personal. |
 | **Enlazar Bastón** | *"Rayo conéctate"*, *"Enlazar bastón"* | Inicia la conexión Bluetooth con el ESP32 y activa la escucha de alertas. |

@@ -21,7 +21,7 @@ source.exclude_dirs = tests,bin,.venv,.git,.github
 source.exclude_patterns = config_gemini.json,config_asistente.json,agenda_personal.json
 
 # (str) Application versioning (method 1)
-version = 0.7
+version = 0.8
 
 # (list) Application requirements
 requirements = python3,kivy,requests,pyjnius,pillow,qrcode
