@@ -366,7 +366,7 @@ class BastonApp(App):
 
         try:
             self.voz.detener_voz()
-            if self.voz.escuchar_una_vez(self.procesar_comando_texto, _al_finalizar_escucha):
+            if self.voz.escuchar_una_vez(self.procesar_comando_texto, _al_finalizar_escucha, self.al_recibir_parcial):
                 self.lbl_estado.text = "Micrófono activo. Di tu comando ahora..."
                 self.btn_accion.text = "MICRÓFONO ACTIVO\nTe escucho, di tu comando..."
                 self.btn_accion.background_color = (0.85, 0.2, 0.2, 1)

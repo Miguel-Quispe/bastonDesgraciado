@@ -497,10 +497,29 @@ class SpeechEngine:
         )
         self.hilo_escucha.start()
 
+    def detener_voz(self):
+        """Detiene de inmediato cualquier reproducción TTS en curso y resetea bloqueo de eco."""
+        self.reproduciendo_tts = False
+        self._bloqueo_eco_hasta = 0
+        if getattr(self, 'tts', None):
+            try:
+                self.tts.stop()
+            except Exception:
+                pass
+        try:
+            while hasattr(self, '_cola_tts') and not self._cola_tts.empty():
+                try:
+                    self._cola_tts.get_nowait()
+                    self._cola_tts.task_done()
+                except Exception:
+                    break
+        except Exception:
+            pass
+
     def detener_escucha(self):
         self.escuchando = False
 
-    def escuchar_una_vez(self, callback_comando, callback_finalizar=None):
+    def escuchar_una_vez(self, callback_comando, callback_finalizar=None, callback_parcial=None):
         """Detiene locuciones previas, prepara el micro y escucha un comando único."""
         self.detener_voz()
         if self._evento_reinicio_mic is not None:
@@ -513,10 +532,10 @@ class SpeechEngine:
         self._callback_fin_escucha_una_vez = callback_finalizar
         self.escuchando = True
         if self.activity:
-            self._iniciar_reconocimiento_nativo_android(callback_comando)
+            self._iniciar_reconocimiento_nativo_android(callback_comando, callback_parcial)
         else:
             self._escucha_una_vez = False
-            self.iniciar_escucha_continua(callback_comando)
+            self.iniciar_escucha_continua(callback_comando, callback_parcial)
         return True
 
     def _finalizar_escucha_una_vez(self):
@@ -590,12 +609,20 @@ class SpeechEngine:
 
                 @java_method('(Landroid/os/Bundle;)V')
                 def onReadyForSpeech(self, params):
+                    print("[SpeechEngine] Micrófono listo: capturando audio")
                     self.engine._errores_mic_consecutivos = 0
                     self.engine._ultimo_texto_parcial = ""
+                    try:
+                        ToneGenerator = autoclass('android.media.ToneGenerator')
+                        AudioManager = autoclass('android.media.AudioManager')
+                        tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 65)
+                        tg.startTone(ToneGenerator.TONE_PROP_BEEP, 100)
+                    except Exception:
+                        pass
 
                 @java_method('()V')
                 def onBeginningOfSpeech(self):
-                    pass
+                    print("[SpeechEngine] Voz detectada...")
 
                 @java_method('(F)V')
                 def onRmsChanged(self, rmsdB):
@@ -607,15 +634,21 @@ class SpeechEngine:
 
                 @java_method('()V')
                 def onEndOfSpeech(self):
-                    pass
+                    print("[SpeechEngine] Fin de locución detectado")
 
                 @java_method('(I)V')
                 def onError(self, error):
+                    print(f"[SpeechEngine] onError código: {error}")
                     if time.monotonic() < getattr(self.engine, '_ignorar_errores_hasta', 0):
                         return
 
                     if not self.engine.escuchando or getattr(self.engine, 'reproduciendo_tts', False):
                         return
+
+                    parcial = getattr(self.engine, '_ultimo_texto_parcial', '').strip()
+                    if parcial and error in [6, 7]:
+                        self.engine._procesar_texto_reconocido(parcial, self.callback_cmd)
+                        self.engine._ultimo_texto_parcial = ""
 
                     if self.engine._escucha_una_vez:
                         self.engine._finalizar_escucha_una_vez()
@@ -624,11 +657,6 @@ class SpeechEngine:
                     if error == 9:
                         self.engine.escuchando = False
                         return
-
-                    parcial = getattr(self.engine, '_ultimo_texto_parcial', '').strip()
-                    if parcial and error in [6, 7]:
-                        self.engine._procesar_texto_reconocido(parcial, self.callback_cmd)
-                        self.engine._ultimo_texto_parcial = ""
 
                     if self.engine._evento_reinicio_mic is not None:
                         try:
@@ -657,11 +685,12 @@ class SpeechEngine:
                         matches = results.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                         if matches and matches.size() > 0:
                             texto = str(matches.get(0)).strip()
+                            print(f"[SpeechEngine] onResults texto: '{texto}'")
                             self.engine._errores_mic_consecutivos = 0
                             self.engine._ultimo_texto_parcial = ""
                             self.engine._procesar_texto_reconocido(texto, self.callback_cmd)
-                    except Exception:
-                        pass
+                    except Exception as e:
+                        print(f"[SpeechEngine] Error procesando results: {e}")
                     
                     if self.engine._escucha_una_vez:
                         self.engine._finalizar_escucha_una_vez()
@@ -681,11 +710,12 @@ class SpeechEngine:
                 def onPartialResults(self, partialResults):
                     try:
                         matches = partialResults.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
-                        if matches and matches.size() > 0 and self.callback_prc:
+                        if matches and matches.size() > 0:
                             parcial = str(matches.get(0)).strip()
                             if parcial:
                                 self.engine._ultimo_texto_parcial = parcial
-                                Clock.schedule_once(lambda dt, p=parcial: self.callback_prc(p), 0)
+                                if self.callback_prc:
+                                    Clock.schedule_once(lambda dt, p=parcial: self.callback_prc(p), 0)
                     except Exception:
                         pass
 
@@ -720,8 +750,14 @@ class SpeechEngine:
                     self.intent_escucha = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-419")
+                    self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE_PREFERENCE, "es-419")
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
+                    try:
+                        self.intent_escucha.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
+                        self.intent_escucha.putExtra(RecognizerIntent.EXTRA_SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS, 1500)
+                    except Exception:
+                        pass
                     self.speech_rec.startListening(self.intent_escucha)
                 except Exception as e:
                     print(f"[SpeechEngine Error startListening]: {e}")
@@ -845,6 +881,11 @@ class SpeechEngine:
 
     def _procesar_texto_reconocido(self, texto_completo, callback_comando):
         if not texto_completo:
+            return
+
+        if getattr(self, '_escucha_una_vez', False):
+            print(f"[SpeechEngine] Entrega directa (escucha única activada): '{texto_completo}'")
+            Clock.schedule_once(lambda dt: callback_comando(texto_completo), 0)
             return
 
         texto_norm = normalizar_texto(texto_completo)

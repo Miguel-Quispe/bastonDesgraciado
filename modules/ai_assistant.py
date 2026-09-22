@@ -196,8 +196,7 @@ class AIAssistant:
         return urllib.request.Request(url, data=data_bytes, headers=headers), timeout_segundos
 
     def _url_gemini(self, model):
-        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
-        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
     def _headers_gemini(self):
         return {
@@ -281,6 +280,8 @@ class AIAssistant:
         texto = str(detalle).lower()
         if codigo in [401, 403]:
             return "Google rechazó la clave API. Verifica que sea de Google AI Studio y que Gemini API esté habilitada."
+        if codigo == 404:
+            return "El modelo de Gemini no fue encontrado en los servidores de Google (HTTP 404)."
         if codigo == 429:
             return "La clave llegó al límite de cuota. Revisa la cuota o facturación de Google AI Studio."
         if codigo == 503:
@@ -378,8 +379,8 @@ class AIAssistant:
             ]
         }
 
-        # Modelos actuales de Gemini. Se prueban en orden de rapidez y con respaldo.
-        modelos = ["gemini-2.0-flash", "gemini-1.5-flash"]
+        # Modelos actuales vigentes de Gemini (los modelos 2.0 y 1.5 fueron retirados).
+        modelos = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.8-flash"]
         
         for model in modelos:
             try:
@@ -437,7 +438,7 @@ class AIAssistant:
                 ]
             }
 
-            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
+            for model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.8-flash"]:
                 try:
                     txt_limpio = self._post_gemini(model, payload, timeout_segundos=10)
                     if txt_limpio:
