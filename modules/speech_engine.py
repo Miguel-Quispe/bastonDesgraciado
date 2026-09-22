@@ -345,19 +345,49 @@ class SpeechEngine:
 
                 self._aplicar_parametros_tts_android(perfil=perfil)
 
+                texto_str = str(texto).strip()
                 utterance_id = f"voz_{perfil}_{int(time.time() * 1000)}"
-                res = -1
-                try:
-                    res = self.tts.speak(texto, 0, None, utterance_id)
-                except Exception:
-                    try:
-                        res = self.tts.speak(texto, 0, None)
-                    except Exception:
-                        pass
+                MAX_CHARS_POR_CHUNK = 1800
+                if len(texto_str) > MAX_CHARS_POR_CHUNK:
+                    partes = re.split(r'(\n+|\. |\; )', texto_str)
+                    bloques = []
+                    bloque_actual = ""
+                    for p in partes:
+                        if len(bloque_actual) + len(p) < MAX_CHARS_POR_CHUNK:
+                            bloque_actual += p
+                        else:
+                            if bloque_actual.strip():
+                                bloques.append(bloque_actual.strip())
+                            bloque_actual = p
+                    if bloque_actual.strip():
+                        bloques.append(bloque_actual.strip())
+                    if not bloques:
+                        bloques = [texto_str]
 
-                if res != 0 and reintentos > 0:
-                    self.reproduciendo_tts = False
-                    Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1, perfil=perfil), 0.5)
+                    for i, blk in enumerate(bloques):
+                        es_ultimo = (i == len(bloques) - 1)
+                        u_id = utterance_id if es_ultimo else None
+                        queue_mode = 0 if i == 0 else 1
+                        try:
+                            self.tts.speak(blk, queue_mode, None, u_id)
+                        except Exception:
+                            try:
+                                self.tts.speak(blk, queue_mode, None)
+                            except Exception:
+                                pass
+                else:
+                    res = -1
+                    try:
+                        res = self.tts.speak(texto_str, 0, None, utterance_id)
+                    except Exception:
+                        try:
+                            res = self.tts.speak(texto_str, 0, None)
+                        except Exception:
+                            pass
+
+                    if res != 0 and reintentos > 0:
+                        self.reproduciendo_tts = False
+                        Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1, perfil=perfil), 0.5)
             except Exception:
                 self.reproduciendo_tts = False
         else:

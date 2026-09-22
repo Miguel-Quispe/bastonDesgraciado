@@ -113,14 +113,28 @@ class DocumentReader:
         # Si tenemos un asistente con clave API y la foto existe
         if self.ai_assistant and hasattr(self.ai_assistant, 'consultar_gemini_documento_async') and ruta_foto and os.path.exists(ruta_foto):
             def _al_recibir_lectura(respuesta):
-                callback(f"Documento leído:\n{respuesta}" if respuesta else self._procesar_ocr_local(ruta_foto))
+                if respuesta:
+                    resp_limpia = respuesta.strip()
+                    if any(resp_limpia.startswith(pref) for pref in ["No se ", "Para leer ", "Ocurrió ", "Error "]):
+                        callback(resp_limpia)
+                    else:
+                        callback(f"Documento leído:\n{resp_limpia}")
+                else:
+                    callback(self._procesar_ocr_local(ruta_foto))
                 self._limpiar_fotos_antiguas()
 
             self.ai_assistant.consultar_gemini_documento_async(ruta_foto, _al_recibir_lectura)
         elif self.ai_assistant and hasattr(self.ai_assistant, 'consultar_gemini_vision_async') and self.ai_assistant.api_key and ruta_foto and os.path.exists(ruta_foto):
             prompt = "Lee y transcribe con precisión en español todo el texto, título, valores o instrucciones de este documento, pantalla o etiqueta."
             def _al_recibir_vision(respuesta):
-                callback(f"Documento leído:\n{respuesta}" if respuesta else self._procesar_ocr_local(ruta_foto))
+                if respuesta:
+                    resp_limpia = respuesta.strip()
+                    if any(resp_limpia.startswith(pref) for pref in ["No se ", "Para leer ", "Ocurrió ", "Error "]):
+                        callback(resp_limpia)
+                    else:
+                        callback(f"Documento leído:\n{resp_limpia}")
+                else:
+                    callback(self._procesar_ocr_local(ruta_foto))
                 self._limpiar_fotos_antiguas()
 
             self.ai_assistant.consultar_gemini_vision_async(ruta_foto, prompt, _al_recibir_vision)
@@ -178,10 +192,14 @@ class DocumentReader:
             except Exception as e:
                 print(f"[DocumentReader] Error al recuperar bitmap de extras: {e}")
 
-        # 3. Buscar la foto más reciente en carpetas de cámara de Android modificada hace menos de 90 segundos
+        # 3. Buscar la foto más reciente en carpetas de cámara de Android modificada hace menos de 120 segundos
         directorios_camara = [
             "/sdcard/DCIM/Camera",
             "/storage/emulated/0/DCIM/Camera",
+            "/sdcard/DCIM",
+            "/storage/emulated/0/DCIM",
+            "/sdcard/DCIM/100ANDRO",
+            "/storage/emulated/0/DCIM/100ANDRO",
             "/sdcard/Pictures",
             "/storage/emulated/0/Pictures"
         ]
@@ -189,12 +207,13 @@ class DocumentReader:
         for d in directorios_camara:
             if os.path.isdir(d):
                 try:
-                    patron = os.path.join(d, "*.[jJ][pP][gG]")
-                    archivos = glob.glob(patron)
+                    archivos = []
+                    for patron_ext in ["*.[jJ][pP][gG]", "*.[jJ][pP][eE][gG]", "*.[pP][nN][gG]"]:
+                        archivos.extend(glob.glob(os.path.join(d, patron_ext)))
                     if archivos:
                         mas_reciente = max(archivos, key=os.path.getmtime)
                         mtime = os.path.getmtime(mas_reciente)
-                        if ahora - mtime < 90 and os.path.getsize(mas_reciente) > 500:
+                        if ahora - mtime < 120 and os.path.getsize(mas_reciente) > 500:
                             print(f"[DocumentReader] Foto recuperada desde galería: {mas_reciente}")
                             return mas_reciente
                 except Exception:

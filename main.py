@@ -524,14 +524,15 @@ class BastonApp(App):
                 self.programar_reinicio_control_por_gesto(0.2)
 
         elif request_code == 1003:
-            self._camara_en_uso_por_comando = False
             if hasattr(self, 'lector'):
                 self.lector._esperando_resultado_intent = False
                 self.lector._captura_en_progreso = False
             if result_code == -1:
+                self._camara_en_uso_por_comando = True
                 self.lbl_estado.text = "Foto tomada. Leyendo documento..."
                 Clock.schedule_once(lambda dt: self.lector.procesar_foto_capturada(intent_data=intent_data), 0.1)
             else:
+                self._camara_en_uso_por_comando = False
                 self.lector.cancelar_captura("Lectura de documento cancelada.")
                 self.programar_reinicio_control_por_gesto(0.2)
 

@@ -562,7 +562,9 @@ class AIAssistant:
             with Image.open(ruta_imagen) as img:
                 # Corregir orientación según metadata EXIF (crucial al fotografiar pantallas/papeles en vertical)
                 try:
-                    img = ImageOps.exif_transpose(img)
+                    transposed = ImageOps.exif_transpose(img)
+                    if transposed is not None:
+                        img = transposed
                 except Exception:
                     pass
 
@@ -646,8 +648,10 @@ class AIAssistant:
         threading.Thread(target=_hilo_doc, daemon=True).start()
 
     def _consultar_gemini_vision_api(self, ruta_imagen, prompt_instruccion, prompt_sistema=None, timeout_segundos=8.0):
-        if not self.es_api_key_gemini_valida(self.api_key):
+        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
+        if not self.es_api_key_gemini_valida(key):
             return None
+        self.api_key = key
 
         if not os.path.exists(ruta_imagen):
             print(f"[AIAssistant Vision] Archivo de imagen no existe: {ruta_imagen}")

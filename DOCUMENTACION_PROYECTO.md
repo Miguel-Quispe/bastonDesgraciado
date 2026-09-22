@@ -42,7 +42,7 @@ Este flujo evita mantener el micrófono abierto y reduce el riesgo de que el asi
 | QR | `Código QR` | No | Implementado. |
 | Ubicación | `¿Dónde estoy?` | GPS; dirección normalmente requiere red | Implementado con respaldo en Santa Cruz, Bolivia. |
 | Navegación | `Guíame a la farmacia` | Sí, para buscar destino | Requiere validación en recorridos reales. |
-| Leer documento | `Lee este documento` | Gemini para lectura avanzada | La captura está implementada; OCR local completo no está empaquetado. |
+| Leer documento | `Lee este documento` | Sí, Gemini Vision (con clave API) | Implementado con optimización EXIF, redimensionado a 1600px (~250 KB), recuperación inteligente desde intent/galería y lectura por voz fluida sin cortes. |
 | Describir frente | `¿Qué tengo al frente?` | No para objetos cotidianos; Gemini para detalle | EfficientDet Lite0 local identifica personas, sillas, mochilas, libros, computadoras, teclados y celulares, con posición y cercanía aproximada. Puertas, escalones, texto, lápices y reglas individuales pueden requerir Gemini. |
 | Pregunta libre | Pregunta normal | Sí | Usa Gemini con una clave válida. |
 
