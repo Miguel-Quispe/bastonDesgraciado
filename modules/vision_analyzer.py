@@ -157,13 +157,28 @@ class VisionAnalyzer:
         self._palmas_consecutivas = 0
         self._procesando_cuadro_gesto = False
 
-    def reanudar_detector_gesto(self):
-        """Reanuda la detección de gestos manteniendo la cámara activa."""
+    def reanudar_detector_gesto(self, callback_gesto=None):
+        """Reanuda la detección de gestos manteniendo la cámara activa o reiniciándola si fue liberada."""
         self._pausado_gesto = False
         self._palmas_consecutivas = 0
         self._procesando_cuadro_gesto = False
-        if not self._gesto_activo and self._camara_gesto:
+        if callback_gesto:
+            self._callback_gesto = callback_gesto
+
+        if self._camara_gesto:
             self._gesto_activo = True
+            try:
+                self._camara_gesto.startPreview()
+            except Exception:
+                pass
+            print("[VisionAnalyzer] Detector de gesto reanudado (cámara activa).")
+            return True
+        else:
+            cb = callback_gesto or self._callback_gesto
+            if cb:
+                print("[VisionAnalyzer] Reiniciando detector de gesto desde cero...")
+                return self.iniciar_detector_gesto(cb)
+            return False
 
     def _recibir_cuadro_gesto(self, data):
         ahora = time.monotonic()
@@ -183,6 +198,12 @@ class VisionAnalyzer:
         try:
             if not self._gesto_activo or getattr(self, '_pausado_gesto', False):
                 return
+
+            # Cooldown de 1.4 segundos entre activaciones de palma para evitar falsos rebotes con la misma mano
+            ahora = time.monotonic()
+            if ahora - getattr(self, '_ultimo_gesto_activado_ts', 0.0) < 1.4:
+                return
+
             palma_abierta = False
             if self._detector_gesto:
                 palma_abierta = bool(self._detector_gesto.isOpenPalmNv21(
@@ -191,6 +212,7 @@ class VisionAnalyzer:
             self._palmas_consecutivas = self._palmas_consecutivas + 1 if palma_abierta else 0
             if self._palmas_consecutivas >= 1:
                 self._palmas_consecutivas = 0
+                self._ultimo_gesto_activado_ts = time.monotonic()
                 Clock.schedule_once(lambda dt: self._activar_por_gesto(), 0)
         except Exception as error:
             print(f"[VisionAnalyzer] Error analizando gesto: {error}")
@@ -566,11 +588,16 @@ class VisionAnalyzer:
             prompt_nav = (
                 "Eres el copiloto visual de una persona ciega caminando hacia su destino. "
                 "Observa esta foto del camino frente a él. "
-                "IMPORTANTE: Si el usuario tiene su mano abierta o palma cubriendo la cámara deliberadamente para detenerse, responde únicamente: GESTO_MANO_CANCELAR. "
-                "De lo contrario, en una sola frase corta y directa: "
-                "¿El sendero al centro está despejado para seguir caminando recto? "
-                "¿Hay algún obstáculo, poste, vehículo, desnivel o persona que deba esquivar a la izquierda o derecha? "
-                "Ejemplo: 'Camino despejado por el centro, continúa recto' o 'Cuidado con un poste al frente a tu izquierda, ve por la derecha'."
+                "IMPORTANTE: Si el usuario tiene su mano abierta o palma cubriendo la cámara deliberadamente para detenerse o cancelar, responde únicamente la palabra exacta: GESTO_MANO_CANCELAR. "
+                "De lo contrario, describe en frases cortas y directas en español los elementos presentes usando estas expresiones si aplican:\n"
+                "- 'Hay un poste delante.' (si hay poste, columna o árbol enfrente)\n"
+                "- 'Hay una persona delante.' (si hay personas o peatones al frente)\n"
+                "- 'A la izquierda están autos pasando.' (si hay autos o tráfico a la izquierda)\n"
+                "- 'A la derecha hay autos pasando.' (si hay autos o tráfico a la derecha)\n"
+                "- 'Hay un semáforo.' (si hay semáforo visible)\n"
+                "- 'Hay un cruce.' (si hay paso peatonal o cruce de calle)\n"
+                "- Si todo está libre: 'Camino despejado hacia adelante.'\n"
+                "Sé conciso y directo, máximo 2 frases."
             )
             self.ai_assistant.consultar_gemini_vision_async(
                 ruta_foto, prompt_nav,
@@ -730,13 +757,57 @@ class VisionAnalyzer:
     def _generar_descripcion_espacial(self, detecciones, es_navegacion=False):
         if not detecciones:
             if es_navegacion:
-                return "Camino despejado por el centro. Continúa recto."
+                return "Camino despejado hacia adelante."
             return "Camino despejado. No se aprecian obstáculos inmediatos."
 
-        obstaculos_centro = [d for d in detecciones if d["es_centro"]]
-        if es_navegacion and obstaculos_centro:
-            obs = obstaculos_centro[0]
-            return f"Cuidado: {obs['objeto']} al frente en tu sendero ({obs['proximidad']}). Desvíate ligeramente a un costado."
+        if es_navegacion:
+            frases = []
+            autos_izq = False
+            autos_der = False
+            poste_delante = False
+            persona_delante = False
+            semaforo = False
+            cruce = False
+
+            for d in detecciones:
+                obj = d["objeto"]
+                pos = d["posicion"]
+                es_centro = d["es_centro"]
+
+                if obj in ["poste", "árbol", "columna"] and es_centro:
+                    poste_delante = True
+                elif obj == "persona" and es_centro:
+                    persona_delante = True
+                elif obj in ["auto", "autobús", "camión", "motocicleta"]:
+                    if "izquierda" in pos:
+                        autos_izq = True
+                    elif "derecha" in pos:
+                        autos_der = True
+                    elif es_centro:
+                        frases.append("Vehículo delante en tu sendero.")
+                elif obj == "semáforo":
+                    semaforo = True
+                elif obj in ["paso peatonal", "señal de alto", "cruce"]:
+                    cruce = True
+
+            if poste_delante:
+                frases.append("Hay un poste delante.")
+            if persona_delante:
+                frases.append("Hay una persona delante.")
+            if autos_izq:
+                frases.append("A la izquierda están autos pasando.")
+            if autos_der:
+                frases.append("A la derecha hay autos pasando.")
+            if semaforo:
+                frases.append("Hay un semáforo.")
+            if cruce:
+                frases.append("Hay un cruce.")
+
+            if frases:
+                return " ".join(frases)
+
+            obs = detecciones[0]
+            return f"Atención: {obs['objeto']} {obs['posicion']}."
 
         frases = []
         for d in detecciones[:2]:

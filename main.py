@@ -46,17 +46,96 @@ class BastonApp(App):
 
         # Vincular toque en cualquier parte de la pantalla para accesibilidad (cancelar ruta con toque)
         Window.bind(on_touch_down=self.al_tocar_pantalla)
+        Window.clearcolor = (0.0, 0.0, 0.0, 1)  # Fondo negro OLED absoluto
 
         self.layout = BoxLayout(
             orientation='vertical',
-            padding=[dp(16), dp(14), dp(16), dp(16)],
-            spacing=dp(10)
+            padding=[dp(16), dp(16), dp(16), dp(16)],
+            spacing=dp(12)
         )
 
-        # ── Etiqueta de estado principal ──────────────────────────────────────
+        # 1. Barra Superior de Alto Contraste con Botón de Clave API
+        self.layout_top = BoxLayout(
+            orientation='horizontal',
+            size_hint=(1, None),
+            height=dp(48),
+            spacing=dp(8)
+        )
+        self.lbl_baston = Label(
+            text="BASTÓN OK",
+            bold=True,
+            font_size='18sp',
+            color=(1.0, 0.85, 0.0, 1)  # Amarillo tráfico
+        )
+        self.btn_config_api = Button(
+            text="API GEMINI",
+            font_size='14sp',
+            bold=True,
+            size_hint=(None, 1),
+            width=dp(130),
+            background_normal='',
+            background_color=(1.0, 0.85, 0.0, 1),
+            color=(0, 0, 0, 1)
+        )
+        self.btn_config_api.bind(on_press=self.al_toggle_panel_api)
+        self.btn_config = self.btn_config_api  # Alias de compatibilidad
+
+        self.layout_top.add_widget(self.lbl_baston)
+        self.layout_top.add_widget(self.btn_config_api)
+        self.layout.add_widget(self.layout_top)
+
+        # 2. Panel Plegable para Configurar y Pegar la Clave API
+        self.panel_api = BoxLayout(
+            orientation='vertical',
+            spacing=dp(6),
+            size_hint=(1, None),
+            height=0,
+            opacity=0
+        )
+        self.input_api_key = TextInput(
+            text=self.ai.api_key or "",
+            hint_text="Pega tu clave API aquí...",
+            multiline=False,
+            size_hint=(1, None),
+            height=dp(46),
+            background_color=(0.12, 0.12, 0.12, 1),
+            foreground_color=(1, 1, 1, 1),
+            cursor_color=(1, 0.85, 0, 1),
+            font_size='14sp'
+        )
+        self.panel_api.add_widget(self.input_api_key)
+
+        self.btn_pegar_api = Button(
+            text="Pegar del Portapapeles",
+            font_size='15sp',
+            bold=True,
+            size_hint=(1, None),
+            height=dp(42),
+            background_normal='',
+            background_color=(0.2, 0.2, 0.2, 1),
+            color=(1, 0.85, 0, 1)
+        )
+        self.btn_pegar_api.bind(on_press=self.al_pegar_api_key_clipboard)
+        self.panel_api.add_widget(self.btn_pegar_api)
+
+        self.btn_guardar_api = Button(
+            text="Guardar Clave API",
+            font_size='16sp',
+            bold=True,
+            size_hint=(1, None),
+            height=dp(44),
+            background_normal='',
+            background_color=(1, 0.85, 0, 1),
+            color=(0, 0, 0, 1)
+        )
+        self.btn_guardar_api.bind(on_press=self.al_guardar_api_key_ui)
+        self.panel_api.add_widget(self.btn_guardar_api)
+        self.layout.add_widget(self.panel_api)
+
+        # 3. Zona Central: Visor de Texto y Respuestas en Tipografía Gigante
         self.lbl_estado = Label(
-            text="Asistente de Autonomía\nEscucha activa",
-            font_size='20sp',
+            text="Esperando palma abierta...",
+            font_size='26sp',
             bold=True,
             color=(1, 1, 1, 1),
             halign='center',
@@ -66,6 +145,7 @@ class BastonApp(App):
         self.lbl_estado.bind(size=self.lbl_estado.setter('text_size'))
         self.layout.add_widget(self.lbl_estado)
 
+        # Widget de QR preservado oculto para compatibilidad
         self.img_qr = Image(
             size_hint=(1, None),
             height=0,
@@ -73,95 +153,18 @@ class BastonApp(App):
         )
         self.layout.add_widget(self.img_qr)
 
-        # ── Panel de configuración de clave API (oculto por defecto) ──────────
-        self.panel_api = BoxLayout(
-            orientation='vertical',
-            spacing=dp(6),
-            size_hint=(1, None),
-            height=0,
-            opacity=0
-        )
-
-        lbl_api_titulo = Label(
-            text="Clave API de Gemini",
-            font_size='17sp',
+        # 4. Botón Táctil Gigante (Cubre toda el área de contacto para baja visión)
+        self.btn_accion = Button(
+            text="TOCA PARA HABLAR\n(O MUESTRA LA PALMA)",
+            font_size='22sp',
             bold=True,
-            color=(0.9, 0.8, 0.2, 1),
             size_hint=(1, None),
-            height=dp(30),
+            height=dp(150),
+            background_normal='',
+            background_color=(1.0, 0.85, 0.0, 1),
+            color=(0, 0, 0, 1),
             halign='center'
         )
-        lbl_api_titulo.bind(size=lbl_api_titulo.setter('text_size'))
-        self.panel_api.add_widget(lbl_api_titulo)
-
-        self.input_api_key = TextInput(
-            hint_text="Pega aquí tu clave API de Gemini...",
-            font_size='15sp',
-            multiline=False,
-            size_hint=(1, None),
-            height=dp(48),
-            background_color=(0.12, 0.16, 0.22, 1),
-            foreground_color=(1, 1, 1, 1),
-            cursor_color=(0.9, 0.8, 0.2, 1),
-            padding=[dp(10), dp(12)]
-        )
-        self.panel_api.add_widget(self.input_api_key)
-
-        self.btn_pegar_api = Button(
-            text="Pegar Clave del Portapapeles",
-            font_size='15sp',
-            bold=True,
-            size_hint=(1, None),
-            height=dp(44),
-            background_normal='',
-            background_color=(0.15, 0.55, 0.45, 1),
-            color=(1, 1, 1, 1)
-        )
-        self.btn_pegar_api.bind(on_press=self.al_pegar_api_key_clipboard)
-        self.panel_api.add_widget(self.btn_pegar_api)
-
-        self.btn_guardar_api = Button(
-            text="Guardar Clave API",
-            font_size='17sp',
-            bold=True,
-            size_hint=(1, None),
-            height=dp(48),
-            background_normal='',
-            background_color=(0.1, 0.5, 0.85, 1),
-            color=(1, 1, 1, 1)
-        )
-        self.btn_guardar_api.bind(on_press=self.al_guardar_api_key_ui)
-        self.panel_api.add_widget(self.btn_guardar_api)
-
-        self.layout.add_widget(self.panel_api)
-
-        # ── Botón de configuración (engranaje) ────────────────────────────────
-        self.btn_config = Button(
-            text="Configurar Clave API",
-            font_size='16sp',
-            size_hint=(1, None),
-            height=dp(44),
-            background_normal='',
-            background_color=(0.18, 0.22, 0.30, 1),
-            color=(1, 1, 1, 1)
-        )
-        self.btn_config.bind(on_press=self.al_toggle_panel_api)
-        self.layout.add_widget(self.btn_config)
-
-        # ── Botón principal indicador de escucha continua ─────────────────────
-        self.btn_accion = Button(
-            text="ESCUCHA ACTIVA\nHabla libremente",
-            font_size='19sp',
-            bold=True,
-            size_hint=(1, None),
-            height=dp(118),
-            background_normal='',
-            background_color=(0.1, 0.65, 0.45, 1),
-            color=(1, 1, 1, 1),
-            halign='center',
-            valign='middle'
-        )
-        self.btn_accion.bind(size=self.btn_accion.setter('text_size'))
         self.btn_accion.bind(on_press=self.al_presionar_boton_escucha)
         self.layout.add_widget(self.btn_accion)
 
@@ -192,30 +195,42 @@ class BastonApp(App):
 
         self._camara_en_uso_por_comando = False
         self._analizando_camino = False
-        self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
-        self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
-        self.lbl_estado.text = "Navegación cancelada."
-
+        self.voz.detener_voz()
         self.emitir_vibracion_bienvenida()
-        if "gesto" in motivo:
-            self.voz.hablar("Ruta cancelada por gesto de mano. Listo para nueva orden.")
+
+        if "gesto" in motivo or "palma" in motivo:
+            print("[BastonApp] Navegación cancelada por gesto de palma. Preguntando nuevo comando...")
+            self.lbl_estado.text = "Ruta cancelada por palma.\n¿Cuál es tu comando?"
+            self.btn_accion.text = "PALMA DETECTADA\nAbriendo micrófono..."
+            self.btn_accion.background_color = (0.8, 0.5, 0.1, 1)
+            self.btn_accion.color = (0, 0, 0, 1)
+            # Abrir el micrófono de inmediato para recibir la nueva orden del usuario
+            Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.15)
         else:
+            self.lbl_estado.text = "Navegación cancelada."
+            self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
+            self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
+            self.btn_accion.color = (0, 0, 0, 1)
             self.voz.hablar("Navegación y copiloto visual cancelados.")
-        self.programar_reinicio_control_por_gesto()
+            self.programar_reinicio_control_por_gesto(0.2)
 
     def al_toggle_panel_api(self, instance):
         if self.panel_api.opacity == 0:
             clave_actual = self.ai.api_key or ""
             self.input_api_key.text = clave_actual
-            self.panel_api.height = dp(186)
+            self.panel_api.height = dp(142)
             self.panel_api.opacity = 1
-            self.btn_config.text = "Cerrar Configuración"
-            self.btn_config.background_color = (0.45, 0.1, 0.1, 1)
+            if hasattr(self, 'btn_config_api'):
+                self.btn_config_api.text = "CERRAR"
+                self.btn_config_api.background_color = (0.8, 0.2, 0.2, 1)
+                self.btn_config_api.color = (1, 1, 1, 1)
         else:
             self.panel_api.height = 0
             self.panel_api.opacity = 0
-            self.btn_config.text = "Configurar Clave API"
-            self.btn_config.background_color = (0.18, 0.22, 0.30, 1)
+            if hasattr(self, 'btn_config_api'):
+                self.btn_config_api.text = "API GEMINI"
+                self.btn_config_api.background_color = (1.0, 0.85, 0.0, 1)
+                self.btn_config_api.color = (0, 0, 0, 1)
 
     def al_pegar_api_key_clipboard(self, instance):
         try:
@@ -332,8 +347,9 @@ class BastonApp(App):
             pass
 
         self.lbl_estado.text = "Muestra la palma abierta frente a la cámara para ordenar."
-        self.btn_accion.text = "CONTROL POR GESTO ACTIVO\nMuestra tu palma abierta o toca aquí"
-        self.btn_accion.background_color = (0.1, 0.5, 0.7, 1)
+        self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
+        self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
+        self.btn_accion.color = (0, 0, 0, 1)
 
     def iniciar_control_por_gesto(self):
         if not self.voz.activity or self._camara_en_uso_por_comando or self.gps.navegacion_activa:
@@ -341,20 +357,36 @@ class BastonApp(App):
         iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
         if iniciado:
             self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
-            self.btn_accion.text = "ESPERANDO PALMA ABIERTA\nMuestra tu mano abierta para hablar"
-            self.btn_accion.background_color = (0.1, 0.45, 0.7, 1)
+            self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
+            self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
+            self.btn_accion.color = (0, 0, 0, 1)
         else:
             self.lbl_estado.text = "Asistente listo. Presiona el botón para dar una orden."
             self.btn_accion.text = "TOCA PARA HABLAR\nPresiona para dar un comando"
-            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+            self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
+            self.btn_accion.color = (0, 0, 0, 1)
 
     def activar_comando_por_gesto(self):
-        """Se activa al ver la palma abierta: pausa la cámara y abre el micrófono de inmediato."""
+        """
+        Se activa al ver la palma abierta:
+        - Si la navegación a la farmacia u otro destino está activa, se cancela y abre el micrófono de inmediato.
+        - Si el asistente estaba respondiendo o hablando, detiene de inmediato la consulta previa.
+        - Pausa la cámara y abre el micrófono de inmediato para escuchar la nueva orden.
+        """
         try:
+            print("[BastonApp] ¡Palma detectada!")
+            # Detiene en seco la voz/consulta actual si estaba hablando
+            self.voz.detener_voz()
+
+            if self.gps.navegacion_activa:
+                print("[BastonApp] Cancelando navegación activa por gesto de palma detectado.")
+                self.cancelar_navegacion_activa("por gesto de palma")
+                return
+
             self.lbl_estado.text = "¡Palma detectada! Abriendo micrófono..."
             self.btn_accion.text = "PALMA DETECTADA\nAbriendo micrófono..."
             self.btn_accion.background_color = (0.8, 0.5, 0.1, 1)
-            self.voz.detener_voz()
+            self.btn_accion.color = (0, 0, 0, 1)
             self.vision.pausar_detector_gesto()
             Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.10)
         except Exception as e:
@@ -362,36 +394,38 @@ class BastonApp(App):
 
     def _abrir_comando_por_gesto(self):
         def _al_finalizar_escucha():
-            self.programar_reinicio_control_por_gesto()
+            # Si el micrófono se cierra y no estamos en navegación o foto exclusiva, reanudar cámara
+            if not self._camara_en_uso_por_comando and not self.gps.navegacion_activa:
+                self.programar_reinicio_control_por_gesto(0.1)
 
         try:
             self.voz.detener_voz()
             if self.voz.escuchar_una_vez(self.procesar_comando_texto, _al_finalizar_escucha, self.al_recibir_parcial):
                 self.lbl_estado.text = "Micrófono activo. Di tu comando ahora..."
-                self.btn_accion.text = "MICRÓFONO ACTIVO\nTe escucho, di tu comando..."
+                self.btn_accion.text = "MICRÓFONO ACTIVO\nTe escucho, ¿cuál es tu comando?"
                 self.btn_accion.background_color = (0.85, 0.2, 0.2, 1)
+                self.btn_accion.color = (1, 1, 1, 1)
                 self.emitir_vibracion_bienvenida()
             else:
                 self.lbl_estado.text = "Micrófono no disponible. Muestra la palma de nuevo."
-                Clock.schedule_once(lambda dt: self.vision.reanudar_detector_gesto(), 1.0)
+                Clock.schedule_once(lambda dt: self.vision.reanudar_detector_gesto(self.activar_comando_por_gesto), 1.0)
         except Exception as e:
             print(f"[BastonApp] Error en _abrir_comando_por_gesto: {e}")
-            Clock.schedule_once(lambda dt: self.vision.reanudar_detector_gesto(), 1.0)
+            Clock.schedule_once(lambda dt: self.vision.reanudar_detector_gesto(self.activar_comando_por_gesto), 1.0)
 
-    def programar_reinicio_control_por_gesto(self):
-        Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), 0.40)
+    def programar_reinicio_control_por_gesto(self, demora=0.1):
+        Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), demora)
 
     def _reanudar_control_por_gesto_si_libre(self):
         if self._camara_en_uso_por_comando or self.gps.navegacion_activa:
             return
-        espera_voz = getattr(self.voz, "_bloqueo_eco_hasta", 0.0) - time.monotonic()
-        if espera_voz > 0 or getattr(self.voz, "reproduciendo_tts", False):
-            Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), max(espera_voz, 0.5) + 0.25)
-            return
-        self.vision.reanudar_detector_gesto()
-        self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
-        self.btn_accion.text = "ESPERANDO PALMA ABIERTA\nMuestra tu mano abierta para hablar"
-        self.btn_accion.background_color = (0.1, 0.45, 0.7, 1)
+
+        # La cámara se reenciende de inmediato y vigila la palma abierta mientras el asistente responde
+        self.vision.reanudar_detector_gesto(self.activar_comando_por_gesto)
+
+        self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
+        self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
+        self.btn_accion.color = (0, 0, 0, 1)
 
     def mantener_activa_con_pantalla_apagada(self):
         try:
@@ -439,7 +473,7 @@ class BastonApp(App):
             self.cancelar_navegacion_activa("por botón táctil")
             return
 
-        self.vision.detener_detector_gesto()
+        self.vision.pausar_detector_gesto()
         self.activar_comando_por_gesto()
 
     def al_recibir_parcial(self, texto_parcial):
@@ -458,6 +492,16 @@ class BastonApp(App):
         self.lbl_estado.text = f"Comando: {texto_comando}"
         self.img_qr.opacity = 0
         self.img_qr.height = 0
+
+        # Paso 4: A menos que el comando requiera uso exclusivo de la cámara (fotos o guiado peatonal),
+        # reencendemos la cámara de inmediato para que vigile la mano del usuario mientras el asistente responde.
+        es_comando_foto_o_nav = any(w in texto for w in [
+            "guiame", "guia", "llevame", "lleva", "ir a", "como llego", "navegar",
+            "leer", "lee", "lectura", "documento",
+            "frente", "al frente", "delante", "que hay", "que veo", "que ves", "foto", "obstaculo"
+        ])
+        if not es_comando_foto_o_nav:
+            self.programar_reinicio_control_por_gesto(0.1)
 
         # NODO 0A: Presentación Oficial del Proyecto ante el Jurado
         if any(w in texto for w in ["presentar proyecto", "presentacion", "presentate", "saludo jurado", "explicar proyecto", "que es este proyecto"]):
@@ -504,36 +548,50 @@ class BastonApp(App):
             return
 
         # NODO 4: Navegación y Guiado Peatonal Asistido con Visión
-        if any(w in texto for w in ["guiame", "guia", "llevame", "lleva", "ir a", "ir al", "ir a la", "como llego", "navegar", "buscar farmacia", "llegar a"]):
+        if any(w in texto for w in ["guiame", "guia", "llevame", "lleva", "ir a", "ir al", "ir a la", "como llego", "navegar", "buscar farmacia", "llegar a", "farmacia"]):
             lugar = texto_comando
-            for prefijo in ["guiame a la", "guiame al", "guiame a", "guia a la", "guia a", "llevame a la", "llevame al", "llevame a", "lleva a", "ir a la", "ir al", "ir a", "como llego a la", "como llego al", "como llego a", "buscar", "navegar a", "llegar a una", "llegar a la", "llegar a"]:
+            for prefijo in [
+                "llevame a la farmacia mas cercana", "llevame a la farmacia mas cercano",
+                "guiame a la farmacia mas cercana", "guiame a la farmacia mas cercano",
+                "llevame a la farmacia", "guiame a la farmacia", "lleva a la farmacia",
+                "guiame a la", "guiame al", "guiame a", "guia a la", "guia a",
+                "llevame a la", "llevame al", "llevame a", "lleva a", "ir a la", "ir al", "ir a",
+                "como llego a la", "como llego al", "como llego a", "buscar", "navegar a", "llegar a una", "llegar a la", "llegar a"
+            ]:
                 pref_norm = normalizar_texto(prefijo)
                 if pref_norm in texto:
                     idx = texto.find(pref_norm)
                     if idx != -1:
                         lugar = texto_comando[idx + len(pref_norm):].strip()
                     break
-            
-            if not lugar:
+
+            # Limpiar sufijos o asumir farmacia si se mencionó
+            lugar_norm = normalizar_texto(lugar)
+            for sufijo in ["mas cercana", "mas cercano", "cercana", "cercano"]:
+                if lugar_norm.endswith(sufijo):
+                    lugar = lugar[:len(lugar) - len(sufijo)].strip()
+                    lugar_norm = normalizar_texto(lugar)
+
+            if not lugar or "farmacia" in texto:
                 lugar = "farmacia"
 
-            # Ceder la cámara al modo navegación asistida
-            self.vision.detener_detector_gesto()
+            # Iniciar navegación con copiloto visual
             self._camara_en_uso_por_comando = True
 
-            self.btn_accion.text = "NAVEGANDO...\nTOCA PARA CANCELAR"
+            self.btn_accion.text = "NAVEGANDO A DESTINO\n(MUESTRA LA PALMA PARA CANCELAR)"
             self.btn_accion.background_color = (0.8, 0.2, 0.2, 1)
+            self.btn_accion.color = (1, 1, 1, 1)
 
-            self.voz.hablar(f"Buscando {lugar} más cercana y calculando ruta segura...")
+            self.voz.hablar(f"Calculando ruta a {lugar} más cercana y activando cámara...")
             lat, lon = self.gps.obtener_coordenadas()
             mensaje_guia = self.gps.buscar_y_establecer_destino(lugar, lat, lon)
             self.lbl_estado.text = mensaje_guia
             self.voz.hablar(mensaje_guia)
 
-            # Iniciar bucle de copiloto peatonal con cámara (cada 5.5 segundos)
+            # Iniciar bucle de copiloto peatonal con cámara permanente (cada 4.0 segundos)
             if self.evento_navegacion:
                 self.evento_navegacion.cancel()
-            self.evento_navegacion = Clock.schedule_interval(self._monitorear_navegacion_con_camara, 5.5)
+            self.evento_navegacion = Clock.schedule_interval(self._monitorear_navegacion_con_camara, 4.0)
             return
 
         # NODO 5: Cambiar Nombre de Activación
@@ -704,6 +762,7 @@ class BastonApp(App):
 
     def al_recibir_respuesta_gemini(self, respuesta):
         self.lbl_estado.text = f"IA: {respuesta}"
+        self.programar_reinicio_control_por_gesto(0.1)
         self.voz.hablar_respuesta_ia(respuesta)
 
     def _monitorear_navegacion_con_camara(self, dt):
@@ -768,11 +827,25 @@ class BastonApp(App):
 
     def _actualizar_estado_baston(self, mensaje_estado):
         self.lbl_estado.text = f"Estado: {mensaje_estado}"
+        if hasattr(self, 'lbl_baston'):
+            if "Conectado" in mensaje_estado:
+                self.lbl_baston.text = "BASTÓN OK"
+                self.lbl_baston.color = (1.0, 0.85, 0.0, 1)
+            else:
+                self.lbl_baston.text = "BASTÓN DESC."
+                self.lbl_baston.color = (0.8, 0.3, 0.3, 1)
         if "Reconectando" in mensaje_estado or "Reconectado" in mensaje_estado:
             self.voz.hablar(mensaje_estado)
 
     def al_completar_conexion_baston(self, exito):
         def actualizar_ui(dt):
+            if hasattr(self, 'lbl_baston'):
+                if exito:
+                    self.lbl_baston.text = "BASTÓN OK"
+                    self.lbl_baston.color = (1.0, 0.85, 0.0, 1)
+                else:
+                    self.lbl_baston.text = "BASTÓN DESC."
+                    self.lbl_baston.color = (0.8, 0.3, 0.3, 1)
             if exito:
                 self.lbl_estado.text = "Estado: Conectado al Bastón ESP32"
                 self.voz.hablar("Conectado.")
