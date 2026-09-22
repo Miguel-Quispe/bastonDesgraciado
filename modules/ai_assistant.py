@@ -104,6 +104,8 @@ class AIAssistant:
     }
 
     MODELOS_PRIORITARIOS = [
+        "gemini-flash-lite-latest",
+        "gemini-3-flash-preview",
         "gemini-3.6-flash",
         "gemini-3.5-flash",
         "gemini-3.5-flash-lite",
@@ -114,10 +116,12 @@ class AIAssistant:
     def __init__(self, directorio_datos=None):
         self._config_nombre = "config_gemini.json"
         self._directorio_personalizado = directorio_datos
+        # Clave activa por defecto para que la app funcione directamente out-of-the-box
         self.api_key_defecto = ""
         self.ultimo_error_config = ""
-        self.modelo_activo = None
+        self.modelo_activo = "gemini-flash-lite-latest"
         self._modelos_detectados_cache = []
+        self.claves_pool = []
         self.api_key = self._cargar_api_key()
 
     @property
@@ -229,8 +233,20 @@ class AIAssistant:
             try:
                 data = json.loads(contenido)
                 key_conf = data.get("api_key") or data.get("key") or data.get("gemini_api_key") or ""
+                keys_list = data.get("api_keys") or []
+                if isinstance(keys_list, list):
+                    for k in keys_list:
+                        k_limpia = self.limpiar_api_key(k)
+                        if self.es_api_key_gemini_valida(k_limpia) and k_limpia not in self.claves_pool:
+                            self.claves_pool.append(k_limpia)
             except Exception:
                 key_conf = contenido
+
+            # Si el contenido tiene varias claves separadas por coma, agregarlas al pool
+            for token in re.split(r"[,;\s]+", contenido):
+                t_limpio = self.limpiar_api_key(token)
+                if self.es_api_key_gemini_valida(t_limpio) and t_limpio not in self.claves_pool:
+                    self.claves_pool.append(t_limpio)
 
             return self.limpiar_api_key(key_conf)
         except Exception as e:
@@ -255,16 +271,21 @@ class AIAssistant:
         return self.api_key_defecto
 
     def guardar_api_key(self, nueva_key):
-        """Guarda la API Key de forma persistente en todas las ubicaciones seguras."""
-        key_limpia = self.limpiar_api_key(nueva_key)
+        """Guarda una o múltiples API Keys (separadas por coma o salto de línea) con soporte para pool."""
         self.ultimo_error_config = ""
+        # Extraer todas las posibles claves enviadas
+        partes = [self.limpiar_api_key(c) for c in re.split(r"[,;\s]+", str(nueva_key).strip())]
+        claves_validas = [c for c in partes if self.es_api_key_gemini_valida(c)]
 
-        if not self.es_api_key_gemini_valida(key_limpia):
+        if not claves_validas:
             self.ultimo_error_config = "La clave no parece ser válida. Debe tener al menos 15 caracteres."
             print(f"[AIAssistant] {self.ultimo_error_config}")
             return False
 
+        key_principal = claves_validas[0]
+        self.claves_pool = claves_validas
         guardado_exitoso = False
+
         # Guardar en todas las rutas posibles del dispositivo
         for ruta in self._rutas_config_posibles():
             try:
@@ -272,14 +293,17 @@ class AIAssistant:
                 if carpeta:
                     os.makedirs(carpeta, exist_ok=True)
                 with open(ruta, "w", encoding="utf-8") as f:
-                    json.dump({"api_key": key_limpia}, f, ensure_ascii=False)
+                    json.dump({
+                        "api_key": key_principal,
+                        "api_keys": claves_validas,
+                    }, f, ensure_ascii=False)
                 guardado_exitoso = True
-                print(f"[AIAssistant] Clave API guardada en: {ruta}")
+                print(f"[AIAssistant] Clave(s) API guardada(s) en: {ruta}")
             except Exception as e:
                 print(f"[AIAssistant] Aviso al guardar en {ruta}: {e}")
 
         if guardado_exitoso:
-            self.api_key = key_limpia
+            self.api_key = key_principal
             return True
         else:
             self.ultimo_error_config = "No se pudo guardar la clave en el almacenamiento del dispositivo."
@@ -288,25 +312,47 @@ class AIAssistant:
     def tiene_api_key_configurada(self):
         return self.es_api_key_gemini_valida(self.api_key)
 
-    def _crear_request_gemini(self, model, payload, timeout_segundos=9):
-        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
-        url = self._url_gemini(model)
+    def _obtener_lista_claves(self):
+        """Devuelve todas las claves API válidas para conmutación por fallo automática (failover)."""
+        candidatas = []
+        for k in (self.claves_pool or []):
+            k_limpia = self.limpiar_api_key(k)
+            if self.es_api_key_gemini_valida(k_limpia) and k_limpia not in candidatas:
+                candidatas.append(k_limpia)
+        if self.api_key:
+            k_limpia = self.limpiar_api_key(self.api_key)
+            if self.es_api_key_gemini_valida(k_limpia) and k_limpia not in candidatas:
+                candidatas.append(k_limpia)
+        cargada = self._cargar_api_key()
+        if cargada:
+            k_limpia = self.limpiar_api_key(cargada)
+            if self.es_api_key_gemini_valida(k_limpia) and k_limpia not in candidatas:
+                candidatas.append(k_limpia)
+        if self.api_key_defecto:
+            k_limpia = self.limpiar_api_key(self.api_key_defecto)
+            if self.es_api_key_gemini_valida(k_limpia) and k_limpia not in candidatas:
+                candidatas.append(k_limpia)
+        return candidatas
+
+    def _crear_request_gemini(self, model, payload, timeout_segundos=9, key=None):
+        clave = self.limpiar_api_key(key or self.api_key or self._cargar_api_key())
+        url = self._url_gemini(model, key=clave)
         data_bytes = json.dumps(payload).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
-            "x-goog-api-key": key,
+            "x-goog-api-key": clave,
         }
         return urllib.request.Request(url, data=data_bytes, headers=headers), timeout_segundos
 
-    def _url_gemini(self, model):
-        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
-        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+    def _url_gemini(self, model, key=None):
+        clave = self.limpiar_api_key(key or self.api_key or self._cargar_api_key())
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={clave}"
 
-    def _headers_gemini(self):
-        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
+    def _headers_gemini(self, key=None):
+        clave = self.limpiar_api_key(key or self.api_key or self._cargar_api_key())
         return {
             "Content-Type": "application/json",
-            "x-goog-api-key": key,
+            "x-goog-api-key": clave,
         }
 
     def _extraer_texto_respuesta(self, res_json):
@@ -374,10 +420,10 @@ class AIAssistant:
             print(f"[AIAssistant] No se pudo auto-descubrir modelos: {e}")
         return []
 
-    def _post_gemini(self, model, payload, timeout_segundos=9):
+    def _post_gemini(self, model, payload, timeout_segundos=9, key=None):
         """Hace la llamada a Gemini con requests; urllib queda como respaldo."""
-        url = self._url_gemini(model)
-        headers = self._headers_gemini()
+        url = self._url_gemini(model, key=key)
+        headers = self._headers_gemini(key=key)
 
         try:
             import requests
@@ -399,7 +445,7 @@ class AIAssistant:
         except Exception as requests_error:
             print(f"[AIAssistant] requests falló en {model}: {requests_error}. Intentando urllib...")
 
-        req, timeout_urllib = self._crear_request_gemini(model, payload, timeout_segundos=timeout_segundos)
+        req, timeout_urllib = self._crear_request_gemini(model, payload, timeout_segundos=timeout_segundos, key=key)
         try:
             with urllib.request.urlopen(req, timeout=timeout_urllib) as response:
                 if response.status == 200:
@@ -468,7 +514,6 @@ class AIAssistant:
 
     def _probar_conexion_gemini(self):
         self.ultimo_error_config = ""
-        # 1. Intentar descubrir modelos habilitados
         detectados = self._detectar_modelos_disponibles_api()
         if detectados:
             self.modelo_activo = detectados[0]
@@ -476,14 +521,13 @@ class AIAssistant:
         respuesta = self._consultar_gemini_api("Responde exactamente con la palabra OK.")
         if respuesta and "no se pudo conectar" not in respuesta.lower() and "clave api" not in respuesta.lower() and "no está disponible" not in respuesta.lower():
             modelo_usado = self.modelo_activo or "Gemini Flash"
-            return True, f"Clave API comprobada exitosamente con {modelo_usado}. Gemini está listo."
+            return True, f"Clave API verificada y funcionando con {modelo_usado}. Gemini está 100% listo."
 
-        # Si el error fue de cuota (429), la clave es válida y conectó con Google
         if "cuota" in (self.ultimo_error_config or "").lower() or "429" in (self.ultimo_error_config or "") or "límite de peticiones" in (respuesta or "").lower():
-            modelo_usado = self.modelo_activo or "gemini-3.6-flash"
-            return True, f"Clave API válida y verificada con Google ({modelo_usado}). Cuota por minuto alcanzada temporalmente; estará disponible enseguida."
+            modelo_usado = self.modelo_activo or "gemini-flash-lite-latest"
+            return True, f"Clave verificada con Google ({modelo_usado}). Cuota de peticiones alcanzada temporalmente; estará disponible enseguida."
 
-        mensaje = self.ultimo_error_config or "Gemini no respondió. Revisa internet, cuota o permisos de la clave."
+        mensaje = self.ultimo_error_config or "Gemini no respondió. Revisa internet o permisos de la clave."
         return False, mensaje
 
     def responder_consulta_local(self, texto_normalizado, texto_original):
@@ -558,25 +602,29 @@ class AIAssistant:
             ]
         }
 
-        # Modelos compatibles de Gemini en orden de rapidez y cuota
+        # Probar todas las claves disponibles (failover) con los modelos candidatos
+        claves = self._obtener_lista_claves()
         modelos = self._obtener_modelos_candidatos()
         hubo_cuota = False
         
-        for model in modelos:
-            try:
-                txt_limpio = self._post_gemini(model, payload, timeout_segundos=6)
-                if txt_limpio:
-                    return txt_limpio
-                if "429" in (self.ultimo_error_config or "") or "cuota" in (self.ultimo_error_config or "").lower():
-                    hubo_cuota = True
-            except Exception as e:
-                self._registrar_error_gemini(model, e)
-                if "429" in (self.ultimo_error_config or ""):
-                    hubo_cuota = True
-                continue
+        for k in claves:
+            for model in modelos:
+                try:
+                    txt_limpio = self._post_gemini(model, payload, timeout_segundos=7, key=k)
+                    if txt_limpio:
+                        self.api_key = k
+                        self.modelo_activo = model
+                        return txt_limpio
+                    if "429" in (self.ultimo_error_config or "") or "cuota" in (self.ultimo_error_config or "").lower():
+                        hubo_cuota = True
+                except Exception as e:
+                    self._registrar_error_gemini(model, e)
+                    if "429" in (self.ultimo_error_config or ""):
+                        hubo_cuota = True
+                    continue
 
         if hubo_cuota:
-            return "La clave de Gemini está activa, pero alcanzó el límite de peticiones por minuto en la cuenta gratuita de Google AI Studio. Espera un minuto e inténtalo de nuevo."
+            return "Las claves de Gemini alcanzaron el límite de peticiones por minuto. Espera un momento mientras se restablece la cuota."
 
         error_detalle = self.ultimo_error_config or "Verifica tu conexión a internet o tu clave API."
         return f"No se pudo conectar con Gemini. {error_detalle}"
