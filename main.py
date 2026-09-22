@@ -618,11 +618,25 @@ class BastonApp(App):
                     self.voz.hablar(detalle)
             return
 
+        # NODO 12B: Configuración del Servidor de Voz Optimus Prime (XTTS)
+        if any(w in texto for w in ["servidor voz", "ip servidor", "servidor optimus", "conectar servidor"]):
+            palabras = texto_comando.split()
+            posibles = [p for p in palabras if "." in p or "http" in p]
+            if posibles:
+                serv_url = posibles[-1].strip()
+                if not serv_url.startswith("http"):
+                    serv_url = f"http://{serv_url}:5000" if ":" not in serv_url else f"http://{serv_url}"
+                self.voz.url_servidor_voz = serv_url
+                self.voz._guardar_config()
+                self.lbl_estado.text = f"Servidor Voz XTTS:\n{serv_url}"
+                self.voz.hablar(f"Servidor de voz de Optimus actualizado.")
+                return
+
         # NODO 13: Consultas Locales Offline (Hora, Fecha exacta, Ayuda)
         res_local = self.ai.responder_consulta_local(texto, texto_comando)
         if res_local:
             self.lbl_estado.text = res_local
-            self.voz.hablar(res_local)
+            self.voz.hablar_respuesta_ia(res_local)
             return
 
         # NODO 14: IA Conversacional Gemini (Preguntas Libres y Fiestas con fecha real)
@@ -632,7 +646,7 @@ class BastonApp(App):
 
     def al_recibir_respuesta_gemini(self, respuesta):
         self.lbl_estado.text = f"IA: {respuesta}"
-        self.voz.hablar(respuesta)
+        self.voz.hablar_respuesta_ia(respuesta)
 
     def _monitorear_navegacion_con_camara(self, dt):
         if not self.gps.navegacion_activa:

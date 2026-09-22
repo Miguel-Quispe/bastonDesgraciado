@@ -44,6 +44,7 @@ class SpeechEngine:
         self.velocidad_voz = float(config.get("velocidad", 0.88)) # Cadencia firme y medida
         self.tono_voz = float(config.get("tono", 0.68))            # Tono grave / robótico tipo Optimus Prime
         self.genero_voz = config.get("genero", "masculina")
+        self.url_servidor_voz = config.get("url_servidor_voz", "http://192.168.1.100:5000")
 
         self._cola_tts = queue.Queue()
         self._hilo_tts_pc = threading.Thread(target=self._loop_tts_pc, daemon=True)
@@ -336,6 +337,99 @@ class SpeechEngine:
                 self.reproduciendo_tts = False
         else:
             self._cola_tts.put(texto)
+
+    def hablar_respuesta_ia(self, texto, callback_fin=None):
+        """Reproduce la respuesta de la IA usando la voz clonada de Blas García (Optimus Prime).
+        Si el servidor XTTS local/remoto está disponible, descarga el audio y lo reproduce.
+        Si no hay conexión o falla, hace fallback automático e inmediato a la voz TTS nativa."""
+        print(f"[Optimus IA]: {texto}")
+        if not texto:
+            return
+
+        def _tarea_sintesis_ia():
+            audio_generado = self._obtener_audio_clonado_servidor(texto)
+            if audio_generado and os.path.exists(audio_generado):
+                self.reproducir_audio(audio_generado, callback_fin=callback_fin)
+            else:
+                # Fallback al motor local sin bloquear
+                Clock.schedule_once(lambda dt: self.hablar(texto), 0)
+
+        threading.Thread(target=_tarea_sintesis_ia, daemon=True).start()
+
+    def _obtener_audio_clonado_servidor(self, texto):
+        """Envía el texto al servidor XTTS con la muestra optimus_muestra.wav de Blas García."""
+        if not getattr(self, 'url_servidor_voz', None):
+            return None
+        try:
+            import requests
+            url = f"{self.url_servidor_voz.rstrip('/')}/sintetizar"
+            resp = requests.post(url, json={"texto": texto}, timeout=6.0)
+            if resp.status_code == 200 and len(resp.content) > 1000:
+                ruta_salida = os.path.join(os.getcwd(), "respuesta_optimus_ia.wav")
+                with open(ruta_salida, "wb") as f:
+                    f.write(resp.content)
+                return ruta_salida
+        except Exception as e:
+            print(f"[SpeechEngine] Servidor XTTS no disponible ({e}). Usando fallback nativo.")
+        return None
+
+    def reproducir_audio(self, ruta_audio, callback_fin=None):
+        """Reproduce un archivo de audio local (.wav/.mp3) con la voz auténtica en Android o PC."""
+        if not os.path.exists(ruta_audio):
+            return
+
+        self.reproduciendo_tts = True
+        self._detener_speech_recognizer_android()
+
+        # 1. En Android mediante MediaPlayer nativo
+        if self.activity:
+            try:
+                from jnius import autoclass, PythonJavaClass, java_method
+                MediaPlayer = autoclass('android.media.MediaPlayer')
+                player = MediaPlayer()
+                player.setDataSource(ruta_audio)
+                player.prepare()
+
+                class AudioEndListener(PythonJavaClass):
+                    __javainterfaces__ = ['android/media/MediaPlayer$OnCompletionListener']
+                    def __init__(self, engine, cb):
+                        super().__init__()
+                        self.engine = engine
+                        self.cb = cb
+
+                    @java_method('(Landroid/media/MediaPlayer;)V')
+                    def onCompletion(self, mp):
+                        mp.release()
+                        def al_terminar(dt):
+                            self.engine.reproduciendo_tts = False
+                            if self.cb:
+                                self.cb()
+                            if self.engine.escuchando:
+                                self.engine._reiniciar_escucha_android()
+                        Clock.schedule_once(al_terminar, 0.3)
+
+                player.setOnCompletionListener(AudioEndListener(self, callback_fin))
+                player.start()
+                return
+            except Exception as e:
+                print(f"[SpeechEngine] Error al reproducir audio en Android: {e}")
+
+        # 2. En PC mediante SoundLoader de Kivy
+        try:
+            from kivy.core.audio import SoundLoader
+            sonido = SoundLoader.load(ruta_audio)
+            if sonido:
+                def al_detener_sonido():
+                    self.reproduciendo_tts = False
+                    if callback_fin:
+                        callback_fin()
+                sonido.bind(on_stop=lambda s: Clock.schedule_once(lambda dt: al_detener_sonido(), 0.3))
+                sonido.play()
+                return
+        except Exception as e:
+            print(f"[SpeechEngine] Error SoundLoader en PC: {e}")
+
+        self.reproduciendo_tts = False
 
     def _detener_speech_recognizer_android(self):
         try:
