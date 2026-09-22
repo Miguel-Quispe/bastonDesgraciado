@@ -14,6 +14,7 @@ class BluetoothManager:
         self._ultimo_byte_entrada = 0.0
         self._ultima_alerta = ""
         self._tiempo_ultima_alerta = 0.0
+        self.desconexion_voluntaria = False
 
     def _procesar_caracteres_baston(self, datos_bytes, callback_alerta):
         """
@@ -159,7 +160,7 @@ class BluetoothManager:
 
         def loop_auto():
             while True:
-                if not self.conectado and not self.conectando:
+                if not self.conectado and not self.conectando and not self.desconexion_voluntaria:
                     exito = self.conectar()
                     if exito:
                         if self._callback_estado:
@@ -173,6 +174,7 @@ class BluetoothManager:
     def conectar_async(self, callback_resultado=None):
         if self.conectando:
             return
+        self.desconexion_voluntaria = False
 
         def tarea_conexion():
             self.conectando = True
@@ -217,10 +219,7 @@ class BluetoothManager:
             self._hilo_lectura.start()
 
     def desconectar(self):
+        self.desconexion_voluntaria = True
         self.conectado = False
-        if self.socket:
-            try:
-                self.socket.close()
-            except Exception:
-                pass
-            self.socket = None
+        self.conectando = False
+        self._cerrar_socket_actual()

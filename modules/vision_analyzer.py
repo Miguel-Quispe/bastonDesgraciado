@@ -534,10 +534,21 @@ class VisionAnalyzer:
 
             activity.startActivityForResult(intent, 1002)
             self._esperando_resultado_intent = True
+            Clock.unschedule(self._timeout_intent_camara)
+            Clock.schedule_once(self._timeout_intent_camara, 16.0)
             return True
         except Exception as e:
             print(f"[VisionAnalyzer] Error al invocar cámara nativa: {e}")
+            self._esperando_resultado_intent = False
+            self._captura_en_progreso = False
             return False
+
+    def _timeout_intent_camara(self, dt):
+        if self._esperando_resultado_intent:
+            print("[VisionAnalyzer] Watchdog: Tiempo de espera de cámara nativa expirado.")
+            self._esperando_resultado_intent = False
+            self._captura_en_progreso = False
+            self.cancelar_captura("No se tomó la foto a tiempo.")
 
     def _obtener_ruta_foto(self, prefijo="vision_captura"):
         timestamp = time.strftime("%Y%m%d_%H%M%S")

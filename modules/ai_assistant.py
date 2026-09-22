@@ -84,15 +84,12 @@ def obtener_nivel_bateria():
     return "No se pudo obtener el porcentaje de batería en este dispositivo."
 
 class AIAssistant:
+    # Modelos Flash ultrarrápidos priorizados para baja latencia en asistencia visual
     MODELOS_PRIORITARIOS = [
-        "gemini-3.6-flash",
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
         "gemini-2.5-flash",
-        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-1.5-flash",
+        "gemini-flash-latest",
     ]
 
     def __init__(self, directorio_datos=None):
@@ -100,7 +97,7 @@ class AIAssistant:
         self._directorio_personalizado = directorio_datos
         self.api_key_defecto = ""
         self.ultimo_error_config = ""
-        self.modelo_activo = None
+        self.modelo_activo = "gemini-2.5-flash"
         self._modelos_detectados_cache = []
         self.api_key = self._cargar_api_key()
 
@@ -308,17 +305,15 @@ class AIAssistant:
         return self._extraer_texto_respuesta(res_json)
 
     def _obtener_modelos_candidatos(self):
-        """Devuelve la lista ordenada de modelos candidatos, priorizando el modelo activo o descubierto."""
+        """Devuelve máximo 2 modelos candidatos ultrarrápidos para garantizar respuesta en segundos."""
         candidatos = []
         if self.modelo_activo:
             candidatos.append(self.modelo_activo)
-        if self._modelos_detectados_cache:
-            for m in self._modelos_detectados_cache:
-                if m not in candidatos:
-                    candidatos.append(m)
         for p in self.MODELOS_PRIORITARIOS:
             if p not in candidatos:
                 candidatos.append(p)
+            if len(candidatos) >= 2:
+                break
         return candidatos
 
     def _detectar_modelos_disponibles_api(self):
@@ -329,7 +324,7 @@ class AIAssistant:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
         try:
             req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=3) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     detectados = []
@@ -338,7 +333,6 @@ class AIAssistant:
                         metodos = m.get("supportedGenerationMethods", [])
                         if "generateContent" in metodos and ("flash" in nombre or "gemini" in nombre) and "tts" not in nombre and "image" not in nombre:
                             detectados.append(nombre)
-                    # Reordenar según prioridad
                     ordenados = []
                     for p in self.MODELOS_PRIORITARIOS:
                         if p in detectados:
@@ -346,14 +340,14 @@ class AIAssistant:
                     for o in detectados:
                         if o not in ordenados:
                             ordenados.append(o)
-                    self._modelos_detectados_cache = ordenados
-                    return ordenados
+                    self._modelos_detectados_cache = ordenados[:2]
+                    return self._modelos_detectados_cache
         except Exception as e:
             print(f"[AIAssistant] No se pudo auto-descubrir modelos: {e}")
         return []
 
-    def _post_gemini(self, model, payload, timeout_segundos=9):
-        """Hace la llamada a Gemini con requests; urllib queda como respaldo."""
+    def _post_gemini(self, model, payload, timeout_segundos=3.0):
+        """Hace la llamada a Gemini con requests ultrarrápido; urllib queda como respaldo."""
         url = self._url_gemini(model)
         headers = self._headers_gemini()
 
@@ -483,7 +477,15 @@ class AIAssistant:
         if any(w in texto for w in ["bateria", "carga", "pila", "porcentaje de bateria"]):
             return obtener_nivel_bateria()
 
-        # 4. Identidad y ayuda del asistente
+        # 4. Consultas Críticas de Seguridad y Peligro (Respuesta Inmediata Offline < 50ms)
+        if any(w in texto for w in ["peligro", "hay peligro", "es seguro", "puedo cruzar", "puedo avanzar", "hay obstaculo", "cuidado"]):
+            return "Atención: Avanza despacio explorando el suelo con la punta del bastón. Los sensores te alertarán si hay obstáculos a menos de 2 metros."
+
+        # 5. Emergencia y Socorro Local
+        if any(w in texto for w in ["socorro", "auxilio", "ayuda de emergencia", "emergencia"]):
+            return "Modo de emergencia. Si necesitas ayuda, mantén presionado el botón del bastón o pide a una persona cercana tu ubicación."
+
+        # 6. Identidad y ayuda del asistente
         if any(w in texto for w in ["quien eres", "quien sos", "como te llamas", "tu funcion", "que haces", "que puedes hacer"]):
             return "Soy Bastón Inteligente, tu asistente de autonomía. Puedo detectar obstáculos con la cámara, guiarte a lugares, leer documentos, gestionar tu agenda y responder preguntas por voz."
 
@@ -492,13 +494,17 @@ class AIAssistant:
     def consultar_gemini_async(self, pregunta_texto, callback_respuesta):
         """Consulta la API de Gemini en un hilo secundario y devuelve la respuesta por callback."""
         def _hilo_gemini():
-            respuesta = self._consultar_gemini_api(pregunta_texto)
+            try:
+                respuesta = self._consultar_gemini_api(pregunta_texto)
+            except Exception as e:
+                print(f"[AIAssistant] Excepción en hilo Gemini: {e}")
+                respuesta = "No se pudo conectar a la nube. Recuerda confiar en las vibraciones de tu bastón."
             Clock.schedule_once(lambda dt: callback_respuesta(respuesta), 0)
 
         threading.Thread(target=_hilo_gemini, daemon=True).start()
 
     def _consultar_gemini_api(self, pregunta_texto):
-        """Realiza la petición HTTP REST a Gemini Flash con modelos de respaldo y contexto temporal real."""
+        """Realiza la petición HTTP REST a Gemini Flash con modelos ultrarrápidos (timeout de 2.8s)."""
         key = self.api_key or self._cargar_api_key()
         if not key:
             return "La clave API de Gemini no está configurada. Abre configurar clave API y pega una clave válida de Google AI Studio."
@@ -511,14 +517,12 @@ class AIAssistant:
         fecha_humana = f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month - 1]} de {ahora.year}"
         hora_humana = ahora.strftime("%H:%M")
 
-        # Inyectar fecha y hora real para que Gemini nunca responda con fechas obsoletas como '4 de julio de 2024'
         prompt_sistema = (
-            f"FECHA Y HORA ACTUALES EXACTAS DEL DISPOSITIVO: {fecha_humana}, {hora_humana}.\n"
-            "Eres el asistente de voz de un bastón inteligente para personas con discapacidad visual en Bolivia/Latinoamérica. "
-            "Responde a la siguiente consulta de forma concisa, veraz, clara y amable en 1 o máximo 2 oraciones sencillas en español. "
-            "Si te preguntan qué se celebra, qué se festeja o qué día es hoy, básate estrictamente en la fecha actual suministrada. "
-            "No uses asteriscos, viñetas, tablas, símbolos de marcado ni emojis, ya que tu respuesta se reproducirá directamente por voz del celular.\n\n"
-            f"Pregunta del usuario: {pregunta_texto}"
+            f"FECHA Y HORA ACTUALES EXACTAS: {fecha_humana}, {hora_humana}.\n"
+            "Eres el copiloto de voz de un bastón inteligente para personas ciegas en Bolivia/Latinoamérica. "
+            "Responde con máxima brevedad (máximo 1 o 2 frases simples y directas en español). "
+            "No uses asteriscos, viñetas ni emojis. Prioriza claridad y seguridad absoluta.\n\n"
+            f"Pregunta: {pregunta_texto}"
         )
 
         payload = {
@@ -531,30 +535,117 @@ class AIAssistant:
             ]
         }
 
-        # Modelos compatibles de Gemini en orden de rapidez y cuota
+        # Modelos candidatos ultrarrápidos (máximo 2 intentos de 2.8s cada uno)
         modelos = self._obtener_modelos_candidatos()
         
         for model in modelos:
             try:
-                txt_limpio = self._post_gemini(model, payload, timeout_segundos=9)
+                txt_limpio = self._post_gemini(model, payload, timeout_segundos=2.8)
                 if txt_limpio:
                     return txt_limpio
             except Exception as e:
                 self._registrar_error_gemini(model, e)
                 continue
 
-        error_detalle = self.ultimo_error_config or "Verifica tu conexión a internet o tu clave API."
-        return f"No se pudo conectar con Gemini. {error_detalle}"
+        return "Gemini tardó en responder. Guíate con precaución con las vibraciones del bastón."
+
+    def _preparar_imagen_base64(self, ruta_imagen, max_dim=1600, calidad=85):
+        """Optimiza y redimensiona la imagen para transmisión ultrarrápida a Gemini Vision."""
+        if not os.path.exists(ruta_imagen) or os.path.getsize(ruta_imagen) == 0:
+            return None, ""
+
+        import base64
+        # 1. Intentar preprocesar y redimensionar con PIL si está disponible
+        try:
+            from PIL import Image, ImageOps
+            import io
+            with Image.open(ruta_imagen) as img:
+                # Corregir orientación según metadata EXIF (crucial al fotografiar pantallas/papeles en vertical)
+                try:
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass
+
+                # Convertir a RGB si no lo está
+                if img.mode not in ("RGB", "L"):
+                    img = img.convert("RGB")
+
+                # Redimensionar si supera max_dim
+                w, h = img.size
+                if max(w, h) > max_dim:
+                    resample_filter = getattr(Image, 'Resampling', Image).LANCZOS
+                    img.thumbnail((max_dim, max_dim), resample_filter)
+
+                buffer = io.BytesIO()
+                img.save(buffer, format="JPEG", quality=calidad, optimize=True)
+                b64_data = base64.b64encode(buffer.getvalue()).decode("utf-8")
+                return b64_data, "image/jpeg"
+        except Exception as e:
+            print(f"[AIAssistant] Aviso optimización imagen: {e}. Usando lectura de archivo directa.")
+
+        # 2. Fallback: lectura directa de archivo
+        try:
+            with open(ruta_imagen, "rb") as img_f:
+                datos = img_f.read()
+            if datos:
+                return base64.b64encode(datos).decode("utf-8"), "image/jpeg"
+        except Exception as e:
+            print(f"[AIAssistant] Error al leer imagen en base64: {e}")
+        return None, ""
 
     def consultar_gemini_vision_async(self, ruta_imagen, prompt_instruccion, callback_respuesta):
-        """Analiza una fotografía utilizando la API de Gemini Vision en un hilo secundario."""
+        """Analiza una fotografía utilizando la API de Gemini Vision en un hilo secundario con timeout corto."""
         def _hilo_vision():
-            respuesta = self._consultar_gemini_vision_api(ruta_imagen, prompt_instruccion)
+            try:
+                respuesta = self._consultar_gemini_vision_api(ruta_imagen, prompt_instruccion)
+            except Exception as e:
+                print(f"[AIAssistant Vision] Error en hilo vision: {e}")
+                respuesta = None
             Clock.schedule_once(lambda dt: callback_respuesta(respuesta), 0)
 
         threading.Thread(target=_hilo_vision, daemon=True).start()
 
-    def _consultar_gemini_vision_api(self, ruta_imagen, prompt_instruccion):
+    def consultar_gemini_documento_async(self, ruta_imagen, callback_respuesta, prompt_extra=""):
+        """Lectura especializada de documentos, pantallas, hojas y etiquetas usando Gemini Vision con alta fidelidad OCR."""
+        def _hilo_doc():
+            try:
+                key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
+                if not self.es_api_key_gemini_valida(key):
+                    mensaje = "Para leer documentos necesitas configurar tu clave de Gemini en la parte superior."
+                    Clock.schedule_once(lambda dt: callback_respuesta(mensaje), 0)
+                    return
+
+                prompt_sistema_doc = (
+                    "Eres un transcriptor y lector experto de documentos, pantallas, hojas y etiquetas para personas con discapacidad visual. "
+                    "Tu misión es leer y transcribir con fidelidad todo el texto visible en español. "
+                    "NOTA IMPORTANTE: Si la fotografía enfoca la pantalla de un monitor de computadora o celular, ignora los reflejos, brillos o líneas de escaneo del monitor y céntrate en el texto del documento o ventana visible. "
+                    "Estructura tu lectura en español claro para ser escuchado por voz:\n"
+                    "1. Comienza con una frase introductoria breve indicando de qué trata el documento o el título visible (ej: 'Documento sobre...', 'Título: ...').\n"
+                    "2. Lee de forma ordenada y completa el contenido, párrafos principales, fechas, datos, tablas o instrucciones.\n"
+                    "No uses asteriscos (*), almohadillas (#), viñetas extrañas ni emojis."
+                )
+                instruccion = prompt_extra or "Lee y transcribe todo el texto visible con precisión."
+                respuesta = self._consultar_gemini_vision_api(
+                    ruta_imagen,
+                    instruccion,
+                    prompt_sistema=prompt_sistema_doc,
+                    timeout_segundos=15.0
+                )
+                if not respuesta:
+                    error_det = getattr(self, 'ultimo_error_config', '')
+                    if error_det:
+                        respuesta = f"No se pudo completar la lectura del documento. {error_det}"
+                    else:
+                        respuesta = "No se detectó texto legible en la imagen. Asegúrate de enfocar bien la pantalla o documento con la cámara."
+            except Exception as e:
+                print(f"[AIAssistant Documento] Error en hilo lectura: {e}")
+                respuesta = "Ocurrió un error al procesar la imagen del documento en la nube."
+
+            Clock.schedule_once(lambda dt: callback_respuesta(respuesta), 0)
+
+        threading.Thread(target=_hilo_doc, daemon=True).start()
+
+    def _consultar_gemini_vision_api(self, ruta_imagen, prompt_instruccion, prompt_sistema=None, timeout_segundos=8.0):
         if not self.es_api_key_gemini_valida(self.api_key):
             return None
 
@@ -563,17 +654,20 @@ class AIAssistant:
             return None
 
         try:
-            import base64
-            with open(ruta_imagen, "rb") as img_f:
-                b64_data = base64.b64encode(img_f.read()).decode("utf-8")
+            b64_data, mime_type = self._preparar_imagen_base64(ruta_imagen, max_dim=1600, calidad=85)
+            if not b64_data:
+                print(f"[AIAssistant Vision] No se pudo obtener datos de imagen: {ruta_imagen}")
+                return None
 
-            prompt_sistema = (
-                "Eres el asistente de visión de un bastón inteligente para personas con discapacidad visual. "
-                "Responde de forma clara, directa, útil y muy concisa en 1 o 2 oraciones sencillas en español. "
-                "Describe la posición de obstáculos (izquierda, centro, derecha) y si el camino es seguro para avanzar. "
-                "No uses viñetas, asteriscos, símbolos de marcado ni emojis, ya que tu respuesta se reproducirá por voz.\n\n"
-                f"Instrucción para esta imagen: {prompt_instruccion}"
-            )
+            if not prompt_sistema:
+                prompt_sistema = (
+                    "Eres el asistente de visión de un bastón inteligente para personas no videntes. "
+                    "Responde en 1 frase directa indicando obstáculos clave (izquierda, centro, derecha) y si el paso está libre. "
+                    "Sin asteriscos ni emojis.\n\n"
+                    f"Consulta: {prompt_instruccion}"
+                )
+            else:
+                prompt_sistema = f"{prompt_sistema}\n\nDetalle: {prompt_instruccion}"
 
             payload = {
                 "contents": [
@@ -582,7 +676,7 @@ class AIAssistant:
                             {"text": prompt_sistema},
                             {
                                 "inline_data": {
-                                    "mime_type": "image/jpeg",
+                                    "mime_type": mime_type,
                                     "data": b64_data
                                 }
                             }
@@ -594,7 +688,7 @@ class AIAssistant:
             modelos = self._obtener_modelos_candidatos()
             for model in modelos:
                 try:
-                    txt_limpio = self._post_gemini(model, payload, timeout_segundos=10)
+                    txt_limpio = self._post_gemini(model, payload, timeout_segundos=timeout_segundos)
                     if txt_limpio:
                         return txt_limpio
                 except Exception as e:

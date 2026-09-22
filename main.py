@@ -52,14 +52,61 @@ class BastonApp(App):
 
         self.layout = BoxLayout(
             orientation='vertical',
-            padding=[dp(16), dp(14), dp(16), dp(16)],
+            padding=[dp(16), dp(12), dp(16), dp(16)],
             spacing=dp(10)
         )
 
-        # ── Etiqueta de estado principal ──────────────────────────────────────
+        # ── 1. BARRA SUPERIOR HUD (Estado en vivo y Acceso Rápido a Gemini) ──
+        self.bar_superior = BoxLayout(
+            orientation='horizontal',
+            size_hint=(1, None),
+            height=dp(42),
+            spacing=dp(6)
+        )
+
+        self.lbl_baston = Label(
+            text="BASTÓN OK" if (hasattr(self, 'bt') and self.bt.esta_conectado()) else "BASTÓN DESC.",
+            font_size='13sp',
+            bold=True,
+            color=(1.0, 0.85, 0.0, 1) if (hasattr(self, 'bt') and self.bt.esta_conectado()) else (0.85, 0.3, 0.3, 1),
+            size_hint=(0.38, 1),
+            halign='left',
+            valign='middle'
+        )
+        self.lbl_baston.bind(size=self.lbl_baston.setter('text_size'))
+        self.bar_superior.add_widget(self.lbl_baston)
+
+        self.lbl_gps = Label(
+            text="GPS ACTIVO",
+            font_size='12sp',
+            bold=True,
+            color=(0.2, 0.85, 0.5, 1),
+            size_hint=(0.28, 1),
+            halign='center',
+            valign='middle'
+        )
+        self.lbl_gps.bind(size=self.lbl_gps.setter('text_size'))
+        self.bar_superior.add_widget(self.lbl_gps)
+
+        texto_api_btn = "🔑 Gemini OK" if self.ai.tiene_api_key_configurada() else "🔑 Config. API"
+        self.btn_api_rapido = Button(
+            text=texto_api_btn,
+            font_size='12sp',
+            bold=True,
+            size_hint=(0.34, 1),
+            background_normal='',
+            background_color=(0.18, 0.35, 0.52, 1) if self.ai.tiene_api_key_configurada() else (0.8, 0.45, 0.1, 1),
+            color=(1, 1, 1, 1)
+        )
+        self.btn_api_rapido.bind(on_press=self.al_toggle_panel_api)
+        self.bar_superior.add_widget(self.btn_api_rapido)
+
+        self.layout.add_widget(self.bar_superior)
+
+        # ── 2. VISOR CENTRAL HUD DE ALTO CONTRASTE (Marquesina Principal) ────
         self.lbl_estado = Label(
             text="Asistente de Autonomía\nEscucha activa",
-            font_size='20sp',
+            font_size='22sp',
             bold=True,
             color=(1, 1, 1, 1),
             halign='center',
@@ -76,22 +123,22 @@ class BastonApp(App):
         )
         self.layout.add_widget(self.img_qr)
 
-        # ── Panel de configuración de clave API (oculto por defecto) ──────────
+        # ── 3. PANEL MODAL DE CONFIGURACIÓN API DE GEMINI (Oculto por defecto) ──
         self.panel_api = BoxLayout(
             orientation='vertical',
-            spacing=dp(6),
+            spacing=dp(8),
             size_hint=(1, None),
             height=0,
             opacity=0
         )
 
         lbl_api_titulo = Label(
-            text="Clave API de Gemini",
+            text="Configurar Clave API de Gemini",
             font_size='17sp',
             bold=True,
-            color=(0.9, 0.8, 0.2, 1),
+            color=(1.0, 0.85, 0.1, 1),
             size_hint=(1, None),
-            height=dp(30),
+            height=dp(28),
             halign='center'
         )
         lbl_api_titulo.bind(size=lbl_api_titulo.setter('text_size'))
@@ -99,68 +146,74 @@ class BastonApp(App):
 
         self.input_api_key = TextInput(
             text=self.ai.api_key or "",
-            hint_text="Pega aquí tu clave API de Gemini...",
-            font_size='15sp',
+            hint_text="Pega tu clave de Google AI Studio (AIzaSy...)",
+            font_size='14sp',
             multiline=False,
             size_hint=(1, None),
             height=dp(48),
-            background_color=(0.12, 0.16, 0.22, 1),
+            background_color=(0.10, 0.14, 0.20, 1),
             foreground_color=(1, 1, 1, 1),
-            cursor_color=(0.9, 0.8, 0.2, 1),
-            padding=[dp(10), dp(12)]
+            cursor_color=(1.0, 0.85, 0.1, 1),
+            padding=[dp(12), dp(12)]
         )
         self.panel_api.add_widget(self.input_api_key)
 
-        self.btn_pegar_api = Button(
-            text="Pegar Clave del Portapapeles",
-            font_size='15sp',
-            bold=True,
+        fila_botones_api = BoxLayout(
+            orientation='horizontal',
+            spacing=dp(6),
             size_hint=(1, None),
-            height=dp(44),
+            height=dp(46)
+        )
+
+        self.btn_pegar_api = Button(
+            text="Pegar Portapapeles",
+            font_size='14sp',
+            bold=True,
+            size_hint=(0.5, 1),
             background_normal='',
             background_color=(0.15, 0.55, 0.45, 1),
             color=(1, 1, 1, 1)
         )
         self.btn_pegar_api.bind(on_press=self.al_pegar_api_key_clipboard)
-        self.panel_api.add_widget(self.btn_pegar_api)
+        fila_botones_api.add_widget(self.btn_pegar_api)
 
         self.btn_guardar_api = Button(
-            text="Guardar Clave API",
-            font_size='17sp',
+            text="Guardar y Probar",
+            font_size='14sp',
             bold=True,
-            size_hint=(1, None),
-            height=dp(48),
+            size_hint=(0.5, 1),
             background_normal='',
             background_color=(0.1, 0.5, 0.85, 1),
             color=(1, 1, 1, 1)
         )
         self.btn_guardar_api.bind(on_press=self.al_guardar_api_key_ui)
-        self.panel_api.add_widget(self.btn_guardar_api)
+        fila_botones_api.add_widget(self.btn_guardar_api)
+        self.panel_api.add_widget(fila_botones_api)
+
+        self.btn_cerrar_api = Button(
+            text="Cerrar Configuración",
+            font_size='14sp',
+            bold=True,
+            size_hint=(1, None),
+            height=dp(38),
+            background_normal='',
+            background_color=(0.35, 0.15, 0.15, 1),
+            color=(1, 1, 1, 1)
+        )
+        self.btn_cerrar_api.bind(on_press=self.al_toggle_panel_api)
+        self.panel_api.add_widget(self.btn_cerrar_api)
 
         self.layout.add_widget(self.panel_api)
 
-        # ── Botón de configuración (engranaje) ────────────────────────────────
-        self.btn_config = Button(
-            text="Configurar Clave API",
-            font_size='16sp',
-            size_hint=(1, None),
-            height=dp(44),
-            background_normal='',
-            background_color=(0.18, 0.22, 0.30, 1),
-            color=(1, 1, 1, 1)
-        )
-        self.btn_config.bind(on_press=self.al_toggle_panel_api)
-        self.layout.add_widget(self.btn_config)
-
-        # ── Botón principal indicador de escucha continua ─────────────────────
+        # ── 4. BOTÓN GIGANTE ACCESIBLE DE ESCUCHA (125dp Altura) ─────────────
         self.btn_accion = Button(
-            text="ESCUCHA ACTIVA\nHabla libremente",
-            font_size='19sp',
+            text="ESCUCHA ACTIVA\nToca o muestra tu palma",
+            font_size='20sp',
             bold=True,
             size_hint=(1, None),
-            height=dp(118),
+            height=dp(125),
             background_normal='',
-            background_color=(0.1, 0.65, 0.45, 1),
+            background_color=(0.08, 0.65, 0.42, 1),
             color=(1, 1, 1, 1),
             halign='center',
             valign='middle'
@@ -219,15 +272,18 @@ class BastonApp(App):
         if self.panel_api.opacity == 0:
             clave_actual = self.ai.api_key or ""
             self.input_api_key.text = clave_actual
-            self.panel_api.height = dp(186)
+            self.panel_api.height = dp(180)
             self.panel_api.opacity = 1
-            self.btn_config.text = "Cerrar Configuración"
-            self.btn_config.background_color = (0.45, 0.1, 0.1, 1)
+            self.btn_api_rapido.text = "Cerrar ✕"
+            self.btn_api_rapido.background_color = (0.55, 0.2, 0.2, 1)
+            self.lbl_estado.size_hint = (1, 0.4)
         else:
             self.panel_api.height = 0
             self.panel_api.opacity = 0
-            self.btn_config.text = "Configurar Clave API"
-            self.btn_config.background_color = (0.18, 0.22, 0.30, 1)
+            self.lbl_estado.size_hint = (1, 1)
+            texto_api_btn = "🔑 Gemini OK" if self.ai.tiene_api_key_configurada() else "🔑 Config. API"
+            self.btn_api_rapido.text = texto_api_btn
+            self.btn_api_rapido.background_color = (0.18, 0.35, 0.52, 1) if self.ai.tiene_api_key_configurada() else (0.8, 0.45, 0.1, 1)
 
     def al_pegar_api_key_clipboard(self, instance):
         try:
@@ -235,10 +291,10 @@ class BastonApp(App):
             texto = Clipboard.paste()
             if texto and texto.strip():
                 self.input_api_key.text = texto.strip()
-                self.lbl_estado.text = "Clave pegada. Presiona 'Guardar Clave API'."
-                self.voz.hablar("Clave pegada del portapapeles. Presiona guardar.")
+                self.lbl_estado.text = "Clave pegada. Presiona 'Guardar y Probar'."
+                self.voz.hablar("Clave pegada del portapapeles. Presiona guardar y probar.")
             else:
-                self.lbl_estado.text = "El portapapeles está vacío. Copia la clave de AI Studio primero."
+                self.lbl_estado.text = "El portapapeles está vacío. Copia tu clave primero."
                 self.voz.hablar("El portapapeles está vacío. Copia la clave primero.")
         except Exception as e:
             self.lbl_estado.text = f"Error al acceder al portapapeles: {e}"
@@ -252,7 +308,7 @@ class BastonApp(App):
 
         exito = self.ai.guardar_api_key(nueva_key)
         if exito:
-            self.lbl_estado.text = "Clave guardada exitosamente. Probando conexión con Gemini..."
+            self.lbl_estado.text = "Clave guardada exitosamente. Probando conexión ultrarrápida con Gemini..."
             self.voz.hablar("Clave guardada. Probando conexión con Gemini.")
             self.ai.probar_conexion_gemini_async(self.al_resultado_prueba_api)
         else:
@@ -263,9 +319,11 @@ class BastonApp(App):
     def al_resultado_prueba_api(self, exito, mensaje):
         if exito:
             self.lbl_estado.text = "Clave API de Gemini conectada correctamente."
+            self.btn_api_rapido.text = "🔑 Gemini OK"
+            self.btn_api_rapido.background_color = (0.18, 0.35, 0.52, 1)
             self.voz.hablar(mensaje)
             if self.panel_api.opacity != 0:
-                Clock.schedule_once(lambda dt: self.al_toggle_panel_api(None), 2.0)
+                Clock.schedule_once(lambda dt: self.al_toggle_panel_api(None), 1.5)
         else:
             self.lbl_estado.text = f"Gemini: {mensaje}"
             self.voz.hablar(mensaje)
@@ -452,19 +510,30 @@ class BastonApp(App):
             except Exception as e:
                 print(f"[BastonApp] Intent voz error: {e}")
 
-        elif request_code == 1002 and result_code == -1:
-            self.lbl_estado.text = "Procesando foto del entorno..."
-            Clock.schedule_once(lambda dt: self.vision.procesar_foto_capturada(), 0.5)
-
-        elif request_code == 1003 and result_code == -1:
-            self.lbl_estado.text = "Procesando lectura del documento..."
-            Clock.schedule_once(lambda dt: self.lector.procesar_foto_capturada(), 0.5)
-
         elif request_code == 1002:
-            self.vision.cancelar_captura("No pude abrir la cámara trasera.")
+            self._camara_en_uso_por_comando = False
+            if hasattr(self, 'vision'):
+                self.vision._esperando_resultado_intent = False
+                self.vision._captura_en_progreso = False
+                Clock.unschedule(self.vision._timeout_intent_camara)
+            if result_code == -1:
+                self.lbl_estado.text = "Foto tomada. Procesando visión..."
+                Clock.schedule_once(lambda dt: self.vision.procesar_foto_capturada(), 0.1)
+            else:
+                self.vision.cancelar_captura("Captura de foto cancelada.")
+                self.programar_reinicio_control_por_gesto(0.2)
 
         elif request_code == 1003:
-            self.lector.cancelar_captura("No pude abrir la cámara para leer el documento.")
+            self._camara_en_uso_por_comando = False
+            if hasattr(self, 'lector'):
+                self.lector._esperando_resultado_intent = False
+                self.lector._captura_en_progreso = False
+            if result_code == -1:
+                self.lbl_estado.text = "Foto tomada. Leyendo documento..."
+                Clock.schedule_once(lambda dt: self.lector.procesar_foto_capturada(intent_data=intent_data), 0.1)
+            else:
+                self.lector.cancelar_captura("Lectura de documento cancelada.")
+                self.programar_reinicio_control_por_gesto(0.2)
 
     def al_presionar_boton_escucha(self, instance):
         if self.gps.navegacion_activa:
@@ -632,6 +701,7 @@ class BastonApp(App):
                 self.voz.hablar(f"Entendido. Mi nombre ahora es {nuevo_nombre.capitalize()}. ¡Listo para ayudarte!", perfil="animada")
             else:
                 self.voz.hablar(f"No entendí el nuevo nombre. Mi nombre actual es {self.voz.nombre_asistente.capitalize()}.")
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         # NODO 6: Agenda Personal
@@ -639,12 +709,14 @@ class BastonApp(App):
             resumen = self.agenda.borrar_agenda()
             self.lbl_estado.text = "Agenda: Limpiada"
             self.voz.hablar(resumen)
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         if any(w in texto for w in ["ver agenda", "consultar agenda", "mi agenda", "mis recordatorios", "que tengo agendado", "mis tareas", "ver tareas", "que tengo en la agenda", "revisar agenda"]):
             resumen = self.agenda.consultar_agenda()
             self.lbl_estado.text = f"Agenda:\n{resumen}"
             self.voz.hablar(resumen)
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         menciona_guardar = any(w in texto for w in [
@@ -674,6 +746,7 @@ class BastonApp(App):
             resumen = self.agenda.agregar_evento(nota if nota else texto_comando)
             self.lbl_estado.text = f"Agenda:\n{resumen}"
             self.voz.hablar(resumen)
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         # NODO 7: Lectura de Documentos, Hojas y Etiquetas
@@ -695,14 +768,15 @@ class BastonApp(App):
             else:
                 self.voz.hablar("No se pudo obtener la señal GPS.")
                 self.lbl_estado.text = "Error: GPS no disponible"
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         # NODO 9: Conexión Bastón ESP32 / Bluetooth
         if any(w in texto for w in [
-            "conectar baston", "conectar", "conectate", "conectate con el baston", "conectate al baston",
             "desconectar", "desconectate", "desconecta", "desconectate del baston", "desconecta el baston",
-            "desvincular", "desvincula", "desenlazar", "desenlaza", "enlazar baston", "enlazar",
-            "vincular baston", "vincular", "bluetooth", "baston"
+            "desvincular", "desvincula", "desenlazar", "desenlaza", "apagar baston",
+            "conectar baston", "conectar", "conectate", "conectate con el baston", "conectate al baston",
+            "enlazar baston", "enlazar", "vincular baston", "vincular", "bluetooth", "baston"
         ]) and not any(w in texto for w in ["guia", "llevame", "ir", "hola", "agenda", "dime", "donde"]):
             es_desconectar = any(w in texto for w in ["desconectar", "desconectate", "desconecta", "desvincular", "desvincula", "desenlazar", "desenlaza", "apagar", "cortar"])
             if es_desconectar:
@@ -710,9 +784,9 @@ class BastonApp(App):
                 self.lbl_estado.text = "Bastón desconectado."
                 if hasattr(self, 'lbl_baston'):
                     self.lbl_baston.text = "BASTÓN DESC."
-                    self.lbl_baston.color = (0.8, 0.3, 0.3, 1)
+                    self.lbl_baston.color = (0.85, 0.3, 0.3, 1)
                 self.voz.hablar("Bastón desconectado.")
-                self.programar_reinicio_control_por_gesto()
+                self.programar_reinicio_control_por_gesto(0.2)
             else:
                 self.lbl_estado.text = "Estado: Conectando al Bastón ESP32..."
                 self.voz.hablar("Buscando señal del bastón. Conectando...")
@@ -729,6 +803,7 @@ class BastonApp(App):
                 self.img_qr.opacity = 1
                 self.img_qr.height = dp(240)
             self.voz.hablar("Código QR generado en la pantalla para compartir la aplicación.")
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         # NODO 11: Análisis Visual Puntual (¿Qué tengo al frente?)
@@ -753,6 +828,7 @@ class BastonApp(App):
                 self.voz.hablar("Abriendo configuración. Pega una clave API de Google AI Studio.")
             if self.panel_api.opacity == 0:
                 self.al_toggle_panel_api(None)
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         if quiere_guardar_api:
@@ -774,6 +850,7 @@ class BastonApp(App):
                     detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API válida."
                     self.lbl_estado.text = f"Error al guardar. {detalle}"
                     self.voz.hablar(detalle)
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         # NODO 12B: Configuración del Servidor de Voz Optimus Prime (XTTS)
@@ -788,6 +865,7 @@ class BastonApp(App):
                 self.voz._guardar_config()
                 self.lbl_estado.text = f"Servidor Voz XTTS:\n{serv_url}"
                 self.voz.hablar(f"Servidor de voz de Optimus actualizado.")
+                self.programar_reinicio_control_por_gesto(0.2)
                 return
 
         # NODO 13: Consultas Locales Offline (Hora, Fecha exacta, Ayuda)
@@ -795,6 +873,7 @@ class BastonApp(App):
         if res_local:
             self.lbl_estado.text = res_local
             self.voz.hablar_respuesta_ia(res_local)
+            self.programar_reinicio_control_por_gesto(0.2)
             return
 
         # NODO 14: IA Conversacional Gemini (Preguntas Libres y Fiestas con fecha real)
@@ -923,9 +1002,12 @@ class BastonApp(App):
 
     def al_completar_lectura_documento(self, texto_leido):
         self._camara_en_uso_por_comando = False
-        self.lbl_estado.text = f"Lectura: {texto_leido}"
-        self.voz.hablar(texto_leido)
-        self.programar_reinicio_control_por_gesto()
+        self.lbl_estado.text = f"Lectura:\n{texto_leido}"
+        if hasattr(self.voz, 'hablar_respuesta_ia'):
+            self.voz.hablar_respuesta_ia(texto_leido)
+        else:
+            self.voz.hablar(texto_leido)
+        self.programar_reinicio_control_por_gesto(0.2)
 
     def generar_qr_compartir(self):
         url_repo = "https://github.com/Miguel-Quispe/bastonDesgraciado"
