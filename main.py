@@ -698,11 +698,21 @@ class BastonApp(App):
             return
 
         # NODO 9: Conexión Bastón ESP32 / Bluetooth
-        if any(w in texto for w in ["conectar baston", "conectar", "conectate", "desconectar", "enlazar baston", "enlazar", "vincular baston", "vincular", "bluetooth", "baston"]) and not any(w in texto for w in ["guia", "llevame", "ir", "hola", "agenda", "dime", "donde"]):
-            if "desconectar" in texto:
+        if any(w in texto for w in [
+            "conectar baston", "conectar", "conectate", "conectate con el baston", "conectate al baston",
+            "desconectar", "desconectate", "desconecta", "desconectate del baston", "desconecta el baston",
+            "desvincular", "desvincula", "desenlazar", "desenlaza", "enlazar baston", "enlazar",
+            "vincular baston", "vincular", "bluetooth", "baston"
+        ]) and not any(w in texto for w in ["guia", "llevame", "ir", "hola", "agenda", "dime", "donde"]):
+            es_desconectar = any(w in texto for w in ["desconectar", "desconectate", "desconecta", "desvincular", "desvincula", "desenlazar", "desenlaza", "apagar", "cortar"])
+            if es_desconectar:
                 self.bt.desconectar()
                 self.lbl_estado.text = "Bastón desconectado."
+                if hasattr(self, 'lbl_baston'):
+                    self.lbl_baston.text = "BASTÓN DESC."
+                    self.lbl_baston.color = (0.8, 0.3, 0.3, 1)
                 self.voz.hablar("Bastón desconectado.")
+                self.programar_reinicio_control_por_gesto()
             else:
                 self.lbl_estado.text = "Estado: Conectando al Bastón ESP32..."
                 self.voz.hablar("Buscando señal del bastón. Conectando...")
@@ -897,6 +907,8 @@ class BastonApp(App):
                 detalle = self.bt.ultimo_error or "No se detectó el bastón."
                 self.lbl_estado.text = detalle
                 self.voz.hablar(detalle)
+            # Reanudar inmediatamente la detección de mano para que el usuario pueda volver a dar órdenes
+            self.programar_reinicio_control_por_gesto()
         Clock.schedule_once(actualizar_ui, 0)
 
     def _actualizar_ui_alerta(self, mensaje_alerta):
