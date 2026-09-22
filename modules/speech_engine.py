@@ -138,31 +138,51 @@ class SpeechEngine:
         self._guardar_config()
         self.hablar(f"Identidad actualizada a {self.nombre_asistente.capitalize()}. Listo para servir.")
 
-    def _aplicar_parametros_tts_android(self):
-        """Aplica la velocidad, tono e idioma en el motor nativo de Android."""
+    def _aplicar_parametros_tts_android(self, perfil="normal"):
+        """Aplica la velocidad, tono e idioma en el motor nativo de Android según el perfil acústico."""
         if not self.tts or not getattr(self, 'tts_listo', False):
             return
         try:
-            # Tono grave autoritario (0.65 - 0.70 da el timbre de Optimus Prime)
-            self.tts.setPitch(float(self.tono_voz))
-            self.tts.setSpeechRate(float(self.velocidad_voz))
-            
-            # Buscar la mejor voz masculina en español de Google / Android
-            from jnius import autoclass
-            voices = self.tts.getVoices()
-            if voices:
-                iterator = voices.iterator()
-                while iterator.hasNext():
-                    voice = iterator.next()
-                    nombre_v = voice.getName().lower()
-                    locale_v = voice.getLocale().getLanguage()
-                    if locale_v == "es":
-                        # Preferir voz masculina profunda
-                        if any(k in nombre_v for k in ["male", "masc", "es-es-x-sfb", "es-us-x-sfb", "spa-es-male"]):
-                            self.tts.setVoice(voice)
-                            break
+            if perfil == "alerta":
+                # Perfil Sensor/Alerta Bastón: Agudo, rápido y enérgico (Contraste total de aviso de peligro)
+                pitch = 1.25
+                rate = 1.20
+                tipo_voz = "femenina"
+            elif perfil in ("optimus", "ia"):
+                # Perfil Optimus Prime (Blas García): Cavernoso, grave, firme y solemne
+                pitch = 0.52
+                rate = 0.80
+                tipo_voz = "masculina"
+            else:
+                pitch = float(self.tono_voz)
+                rate = float(self.velocidad_voz)
+                tipo_voz = self.genero_voz
+
+            self.tts.setPitch(pitch)
+            self.tts.setSpeechRate(rate)
+
+            # Asignar la mejor voz del sistema para acentuar la diferencia tímbrica
+            try:
+                voices = self.tts.getVoices()
+                if voices:
+                    iterator = voices.iterator()
+                    while iterator.hasNext():
+                        voice = iterator.next()
+                        nombre_v = voice.getName().lower()
+                        locale_v = voice.getLocale().getLanguage()
+                        if locale_v == "es":
+                            if tipo_voz == "femenina":
+                                if any(k in nombre_v for k in ["female", "fem", "ana", "es-es-x-ana"]):
+                                    self.tts.setVoice(voice)
+                                    break
+                            else:
+                                if any(k in nombre_v for k in ["male", "masc", "es-es-x-sfb", "es-us-x-sfb", "spa-es-male"]):
+                                    self.tts.setVoice(voice)
+                                    break
+            except Exception:
+                pass
         except Exception as e:
-            print(f"[SpeechEngine] Aviso al aplicar parámetros TTS: {e}")
+            print(f"[SpeechEngine] Aviso al aplicar parámetros TTS ({perfil}): {e}")
 
     def _inicializar_android(self):
         try:
@@ -250,27 +270,46 @@ class SpeechEngine:
 
         while True:
             try:
-                texto = self._cola_tts.get()
-                if texto is None:
+                elemento = self._cola_tts.get()
+                if elemento is None:
                     break
-                
-                texto_str = str(texto).strip()
+
+                if isinstance(elemento, tuple):
+                    texto_item, perfil_item = elemento
+                else:
+                    texto_item, perfil_item = elemento, "normal"
+
+                texto_str = str(texto_item).strip()
                 if not texto_str:
                     self._cola_tts.task_done()
                     continue
 
                 self.reproduciendo_tts = True
 
+                rate_pc = -2
+                if perfil_item == "alerta":
+                    rate_pc = 3
+                elif perfil_item in ("optimus", "ia"):
+                    rate_pc = -3
+
                 if sp_voice:
+                    try:
+                        sp_voice.Rate = rate_pc
+                    except Exception:
+                        pass
                     sp_voice.Speak(texto_str)
                 elif engine:
+                    try:
+                        engine.setProperty('rate', 195 if perfil_item == "alerta" else (125 if perfil_item in ("optimus", "ia") else 145))
+                    except Exception:
+                        pass
                     engine.say(texto_str)
                     engine.runAndWait()
                 else:
                     import subprocess
                     txt_clean = texto_str.replace("'", " ").replace('"', " ")
                     subprocess.run(
-                        f'PowerShell -Command "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = -2; $s.Speak(\'{txt_clean}\')"',
+                        f'PowerShell -Command "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; $s.Rate = {rate_pc}; $s.Speak(\'{txt_clean}\')"',
                         shell=True
                     )
 
@@ -294,15 +333,16 @@ class SpeechEngine:
         except Exception:
             pass
 
-    def hablar(self, texto, reintentos=3):
-        """Convierte texto a voz completo con tono Optimus Prime sin cortes."""
-        print(f"[Optimus]: {texto}")
+    def hablar(self, texto, reintentos=3, perfil="normal"):
+        """Convierte texto a voz completo según el perfil acústico (alerta o Optimus Prime) sin cortes."""
+        etiqueta = "ALERTA SENSOR" if perfil == "alerta" else "OPTIMUS PRIME"
+        print(f"[{etiqueta}]: {texto}")
         if not texto:
             return
 
         if self.tts:
             if not getattr(self, 'tts_listo', False) and reintentos > 0:
-                Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.5)
+                Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1, perfil=perfil), 0.5)
                 return
 
             self.reproduciendo_tts = True
@@ -318,9 +358,9 @@ class SpeechEngine:
                 except Exception:
                     pass
 
-                self._aplicar_parametros_tts_android()
+                self._aplicar_parametros_tts_android(perfil=perfil)
 
-                utterance_id = f"optimus_{int(time.time() * 1000)}"
+                utterance_id = f"voz_{perfil}_{int(time.time() * 1000)}"
                 res = -1
                 try:
                     res = self.tts.speak(texto, 0, None, utterance_id)
@@ -332,29 +372,30 @@ class SpeechEngine:
 
                 if res != 0 and reintentos > 0:
                     self.reproduciendo_tts = False
-                    Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1), 0.5)
+                    Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1, perfil=perfil), 0.5)
             except Exception:
                 self.reproduciendo_tts = False
         else:
-            self._cola_tts.put(texto)
+            self._cola_tts.put((texto, perfil))
+
+    def hablar_alerta(self, texto):
+        """Perfil Sensor/Bastón: Tono agudo y cadencia rápida para avisos inmediatos del sensor."""
+        Clock.schedule_once(lambda dt: self.hablar(texto, perfil="alerta"), 0)
 
     def hablar_respuesta_ia(self, texto, callback_fin=None):
-        """Reproduce la respuesta de la IA usando la voz clonada de Blas García (Optimus Prime).
-        Si el servidor XTTS local/remoto está disponible, descarga el audio y lo reproduce.
-        Si no hay conexión o falla, hace fallback automático e inmediato a la voz TTS nativa."""
-        print(f"[Optimus IA]: {texto}")
+        """Perfil Optimus Prime (Blas García): Cavernoso, solemne y grave.
+        Funciona 100% nativo y offline en el teléfono, ideal para presentaciones sin PC."""
         if not texto:
             return
 
-        def _tarea_sintesis_ia():
-            audio_generado = self._obtener_audio_clonado_servidor(texto)
-            if audio_generado and os.path.exists(audio_generado):
-                self.reproducir_audio(audio_generado, callback_fin=callback_fin)
-            else:
-                # Fallback al motor local sin bloquear
-                Clock.schedule_once(lambda dt: self.hablar(texto), 0)
+        # Si hay un archivo de audio local pregrabado correspondiente, reproducirlo
+        audio_local = getattr(self, '_buscar_audio_pregrabado', lambda t: None)(texto)
+        if audio_local and os.path.exists(audio_local):
+            self.reproducir_audio(audio_local, callback_fin=callback_fin)
+            return
 
-        threading.Thread(target=_tarea_sintesis_ia, daemon=True).start()
+        # Respuesta nativa offline inmediata con el perfil imponente de Optimus Prime
+        Clock.schedule_once(lambda dt: self.hablar(texto, perfil="optimus"), 0)
 
     def _obtener_audio_clonado_servidor(self, texto):
         """Envía el texto al servidor XTTS con la muestra optimus_muestra.wav de Blas García."""

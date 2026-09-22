@@ -412,6 +412,17 @@ class BastonApp(App):
         self.img_qr.opacity = 0
         self.img_qr.height = 0
 
+        # NODO 0A: Presentación Oficial del Proyecto ante el Jurado
+        if any(w in texto for w in ["presentar proyecto", "presentacion", "presentate", "saludo jurado", "explicar proyecto", "que es este proyecto"]):
+            intro_jurado = (
+                "Saludos, distinguidos miembros del jurado. Soy Optimus Prime, sistema integral de asistencia y navegación "
+                "para personas con discapacidad visual. Cuento con detección ultrasónica en el bastón, visión artificial por cámara "
+                "para detección de obstáculos y lectura de documentos, además de inteligencia artificial. El bastón inteligente se encuentra en línea."
+            )
+            self.lbl_estado.text = "Presentando proyecto al jurado..."
+            self.voz.hablar_respuesta_ia(intro_jurado)
+            return
+
         # NODO 0: Saludo y Activación por voz
         if any(w in texto for w in ["hola", "saludo", "buenas", "activado", "estas ahi", "ayuda", "quien eres"]):
             nombre_act = self.voz.nombre_asistente.capitalize()
@@ -727,7 +738,7 @@ class BastonApp(App):
 
     def _actualizar_ui_alerta(self, mensaje_alerta):
         self.lbl_estado.text = f"¡ALERTA!: {mensaje_alerta}"
-        self.voz.hablar(mensaje_alerta)
+        self.voz.hablar_alerta(mensaje_alerta)
 
     def al_completar_analisis_vision(self, resultado_texto):
         self._camara_en_uso_por_comando = False
