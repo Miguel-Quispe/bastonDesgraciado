@@ -42,6 +42,7 @@ class BastonApp(App):
         self.evento_navegacion = None
         self._analizando_camino = False
         self._ultima_frase_guia = ""
+        self._ultima_distancia_anunciada = None
         self._wake_lock = None
         self._camara_en_uso_por_comando = False
         self._ultimo_toque_tiempo = 0
@@ -582,6 +583,7 @@ class BastonApp(App):
             self.voz.hablar(f"Calculando ruta a {lugar} más cercana y activando cámara...")
             lat, lon = self.gps.obtener_coordenadas()
             mensaje_guia = self.gps.buscar_y_establecer_destino(lugar, lat, lon)
+            self._ultima_distancia_anunciada = getattr(self.gps, 'ultima_distancia', None)
             self.lbl_estado.text = mensaje_guia
             self.voz.hablar(mensaje_guia)
 
@@ -592,19 +594,42 @@ class BastonApp(App):
             return
 
         # NODO 5: Cambiar Nombre de Activación
-        if any(w in texto for w in ["cambiar nombre", "cambiar palabra", "llamate", "tu nombre es", "nuevo nombre", "llamarte"]):
+        palabras_cambiar_nombre = [
+            "cambiar nombre", "cambia nombre", "cambiar el nombre", "cambia el nombre",
+            "cambiar de nombre", "cambia de nombre", "cambiar tu nombre", "cambia tu nombre",
+            "tu nombre es", "tu nombre sera", "ahora te llamas", "te llamas",
+            "llamate", "llamarte", "nuevo nombre", "ponte de nombre", "ponte el nombre"
+        ]
+        if any(w in texto for w in palabras_cambiar_nombre):
             nuevo_nombre = texto_comando
-            for prefijo in ["cambiar nombre a", "cambiar palabra a", "llamate a", "llamate", "tu nombre es", "nuevo nombre", "llamarte"]:
+            for prefijo in [
+                "cambiar nombre a", "cambia nombre a", "cambia el nombre a", "cambiar el nombre a",
+                "cambia tu nombre a", "cambiar tu nombre a", "cambia de nombre a", "cambiar de nombre a",
+                "tu nombre es", "tu nombre sera", "ahora te llamas", "te llamas",
+                "nuevo nombre a", "nuevo nombre es", "nuevo nombre",
+                "llamate a", "llamate", "llamarte a", "llamarte",
+                "ponte de nombre", "ponte el nombre", "cambiar nombre", "cambia nombre"
+            ]:
                 pref_norm = normalizar_texto(prefijo)
                 if pref_norm in texto:
                     idx = texto.find(pref_norm)
                     if idx != -1:
-                        nuevo_nombre = texto_comando[idx + len(pref_norm):].strip()
+                        nuevo_nombre = texto_comando[idx + len(pref_norm):].strip(" :.,-")
                     break
+
+            if nuevo_nombre.lower().startswith("a "):
+                nuevo_nombre = nuevo_nombre[2:].strip()
+            elif nuevo_nombre.lower().startswith("de "):
+                nuevo_nombre = nuevo_nombre[3:].strip()
+
+            partes = nuevo_nombre.strip().split()
+            if partes:
+                nuevo_nombre = partes[0].strip(" :.,-")
             
             if nuevo_nombre:
                 self.voz.actualizar_nombre_asistente(nuevo_nombre)
-                self.lbl_estado.text = f"Nombre del asistente: {nuevo_nombre.capitalize()}"
+                self.lbl_estado.text = f"Nombre del asistente:\n{nuevo_nombre.capitalize()}"
+                self.voz.hablar(f"Entendido. Mi nombre ahora es {nuevo_nombre.capitalize()}. ¡Listo para ayudarte!", perfil="animada")
             else:
                 self.voz.hablar(f"No entendí el nuevo nombre. Mi nombre actual es {self.voz.nombre_asistente.capitalize()}.")
             return
@@ -616,27 +641,37 @@ class BastonApp(App):
             self.voz.hablar(resumen)
             return
 
-        menciona_agenda = any(w in texto for w in ["agenda", "recordatorio", "recordatorios", "tarea", "tareas", "nota"])
-        quiere_guardar_agenda = (
-            any(w in texto for w in ["anotar", "agendar", "recordar", "agregar recordatorio", "guardar nota"])
-            or (menciona_agenda and any(w in texto for w in ["guardar", "agregar", "anotar", "agendar", "recordar", "nota"]))
-        )
-        if quiere_guardar_agenda:
-            nota = texto_comando
-            for prefijo in ["quiero guardar algo en mi agenda", "quiero guardar en mi agenda", "guardar algo en mi agenda", "guardar en mi agenda", "anotar", "agendar", "recordar que", "recordar", "guardar nota", "agregar recordatorio", "nota"]:
-                pref_norm = normalizar_texto(prefijo)
-                if pref_norm in texto:
-                    idx = texto.find(pref_norm)
-                    if idx != -1:
-                        nota = texto_comando[idx + len(pref_norm):].strip()
-                    break
-            resumen = self.agenda.agregar_evento(nota if nota else texto_comando)
+        if any(w in texto for w in ["ver agenda", "consultar agenda", "mi agenda", "mis recordatorios", "que tengo agendado", "mis tareas", "ver tareas", "que tengo en la agenda", "revisar agenda"]):
+            resumen = self.agenda.consultar_agenda()
             self.lbl_estado.text = f"Agenda:\n{resumen}"
             self.voz.hablar(resumen)
             return
 
-        if any(w in texto for w in ["ver agenda", "consultar agenda", "mi agenda", "mis recordatorios", "que tengo agendado", "mis tareas", "ver tareas", "que tengo en la agenda"]):
-            resumen = self.agenda.consultar_agenda()
+        menciona_guardar = any(w in texto for w in [
+            "guardar", "guarda", "agendar", "agenda", "anotar", "anota",
+            "recordar", "recuerda", "recordatorio", "recordatorios", "agregar", "agrega"
+        ])
+        tiene_fecha_o_agenda = any(w in texto for w in [
+            "hasta", "el dia", "fecha", "agenda", "recordatorio", "tarea", "medicina", "cita"
+        ])
+
+        if menciona_guardar and (tiene_fecha_o_agenda or "hasta" in texto or texto.startswith("guardar") or texto.startswith("agendar") or texto.startswith("anotar")):
+            nota = texto_comando
+            for prefijo in [
+                "quiero guardar algo en mi agenda", "quiero guardar en mi agenda",
+                "guardar algo en mi agenda", "guardar en mi agenda", "guardar en la agenda",
+                "agregar a mi agenda", "agregar en mi agenda", "agregar recordatorio",
+                "guardar nota", "guardar recordatorio", "guardar tarea",
+                "guardar", "guarda", "anotar", "anota", "agendar", "agenda",
+                "recordar que", "recordar", "recuerda que", "recuerda", "agregar", "agrega"
+            ]:
+                pref_norm = normalizar_texto(prefijo)
+                if texto.startswith(pref_norm + " ") or pref_norm in texto:
+                    idx = texto.find(pref_norm)
+                    if idx != -1:
+                        nota = texto_comando[idx + len(pref_norm):].strip(" :.,-")
+                    break
+            resumen = self.agenda.agregar_evento(nota if nota else texto_comando)
             self.lbl_estado.text = f"Agenda:\n{resumen}"
             self.voz.hablar(resumen)
             return
@@ -675,14 +710,14 @@ class BastonApp(App):
             return
 
         # NODO 10: Código QR
-        if any(w in texto for w in ["qr", "comparte", "compartir", "codigo"]):
+        if any(w in texto for w in ["qr", "comparte", "compartir", "codigo qr", "codigo", "mostrar qr"]):
             ruta_qr = self.generar_qr_compartir()
-            self.lbl_estado.text = "Código QR generado"
-            if os.path.exists(ruta_qr):
+            self.lbl_estado.text = "Código QR generado en pantalla.\nEscanea para compartir la aplicación."
+            if ruta_qr and os.path.exists(ruta_qr):
                 self.img_qr.source = ruta_qr
                 self.img_qr.reload()
                 self.img_qr.opacity = 1
-                self.img_qr.height = dp(180)
+                self.img_qr.height = dp(240)
             self.voz.hablar("Código QR generado en la pantalla para compartir la aplicación.")
             return
 
@@ -801,12 +836,23 @@ class BastonApp(App):
                 self.cancelar_navegacion_activa("por gesto de mano")
                 return
 
-            frase_combinada = f"{instruccion_gps}. {info_camino}".strip()
+            obstaculo_real = ""
+            if info_camino and "despejado" not in str(info_camino).lower():
+                obstaculo_real = str(info_camino).strip()
 
-            if frase_combinada != self._ultima_frase_guia:
-                self._ultima_frase_guia = frase_combinada
-                self.lbl_estado.text = f"Guía:\n{frase_combinada}"
-                self.voz.hablar(frase_combinada)
+            dist_actual = getattr(self.gps, 'ultima_distancia', None)
+            hubo_avance = (
+                self._ultima_distancia_anunciada is None or 
+                (dist_actual is not None and abs(dist_actual - self._ultima_distancia_anunciada) >= 8)
+            )
+
+            if obstaculo_real:
+                self.lbl_estado.text = f"Guía:\n{instruccion_gps}\n{obstaculo_real}"
+                self.voz.hablar(f"Atención: {obstaculo_real}")
+            elif hubo_avance:
+                self._ultima_distancia_anunciada = dist_actual
+                self.lbl_estado.text = f"Guía:\n{instruccion_gps}"
+                self.voz.hablar(instruccion_gps)
 
         self.vision.analizar_camino_en_navegacion(al_recibir_analisis_camino, ai_assistant=self.ai)
 
@@ -870,12 +916,52 @@ class BastonApp(App):
         self.programar_reinicio_control_por_gesto()
 
     def generar_qr_compartir(self):
-        if not qrcode:
-            return ""
         url_repo = "https://github.com/Miguel-Quispe/bastonDesgraciado"
-        img = qrcode.make(url_repo)
-        ruta_salida = "qr_app.png"
-        img.save(ruta_salida)
+        directorio = getattr(self, 'user_data_dir', None) or os.getcwd()
+        try:
+            os.makedirs(directorio, exist_ok=True)
+        except Exception:
+            directorio = os.getcwd()
+        ruta_salida = os.path.join(directorio, "qr_app.png")
+
+        # Opción 1: Librería qrcode
+        if qrcode:
+            try:
+                img = qrcode.make(url_repo)
+                img.save(ruta_salida)
+                if os.path.exists(ruta_salida) and os.path.getsize(ruta_salida) > 0:
+                    return ruta_salida
+            except Exception as e:
+                print(f"[BastonApp] Error generando QR con librería qrcode: {e}")
+
+        # Opción 2: Descargar imagen QR desde servicio público si hay conexión
+        try:
+            import requests
+            api_qr_url = f"https://api.qrserver.com/v1/create-qr-code/?size=300x300&data={url_repo}"
+            resp = requests.get(api_qr_url, timeout=3)
+            if resp.status_code == 200:
+                with open(ruta_salida, "wb") as f:
+                    f.write(resp.content)
+                if os.path.exists(ruta_salida) and os.path.getsize(ruta_salida) > 0:
+                    return ruta_salida
+        except Exception as e:
+            print(f"[BastonApp] Error descargando QR de red: {e}")
+
+        # Opción 3: Generación visual de respaldo con Pillow
+        try:
+            from PIL import Image as PILImage, ImageDraw
+            img = PILImage.new("RGB", (280, 280), color=(255, 255, 255))
+            draw = ImageDraw.Draw(img)
+            draw.rectangle([10, 10, 270, 270], outline=(0, 0, 0), width=5)
+            draw.rectangle([30, 30, 100, 100], fill=(0, 0, 0))
+            draw.rectangle([180, 30, 250, 100], fill=(0, 0, 0))
+            draw.rectangle([30, 180, 100, 250], fill=(0, 0, 0))
+            draw.rectangle([130, 130, 160, 160], fill=(0, 0, 0))
+            img.save(ruta_salida)
+            return ruta_salida
+        except Exception as e:
+            print(f"[BastonApp] Error en generador QR con PIL: {e}")
+
         return ruta_salida
 
     def on_stop(self):

@@ -180,9 +180,9 @@ class LocationService:
             distancia, direccion = self.calcular_distancia_y_rumbo(lat_actual, lon_actual, self.destino_lat, self.destino_lon)
             self.ultima_distancia = distancia
             self.ultimo_rumbo = direccion
-            return f"Ruta iniciada hacia {self.destino_nombre}. Se encuentra a unos {int(distancia)} metros hacia el {direccion}. Iniciando copiloto visual para guiar tus pasos."
+            return f"{self.destino_nombre} a unos {int(distancia)} metros. Sigue recto para iniciar el recorrido."
         
-        return f"Destino fijado: {self.destino_nombre}. Iniciando guiado asistido."
+        return f"Destino fijado: {self.destino_nombre}. Sigue recto."
 
     def obtener_instruccion_guia(self, lat_actual, lon_actual):
         """Calcula la distancia actual y emite instrucciones de voz según el avance."""
@@ -201,9 +201,9 @@ class LocationService:
 
         # Si está a menos de 25 metros
         if distancia <= 25:
-            return f"Estás a solo {int(distancia)} metros de {self.destino_nombre}, justo al frente."
+            return f"{self.destino_nombre} a {int(distancia)} metros, justo al frente."
 
-        return f"Avanza hacia el {direccion}. Faltan {int(distancia)} metros para {self.destino_nombre}."
+        return f"{self.destino_nombre} a {int(distancia)} metros, sigue recto."
 
     def cancelar_navegacion(self):
         """Detiene la guía activa."""

@@ -98,13 +98,21 @@ class AgendaManager:
             except ValueError:
                 return None, descripcion
 
-        coincidencia_texto = re.search(r"(?:el\s+)?(\d{1,2})\s+de\s+([a-z]+)(?:\s+de\s+(\d{4}))?", fecha_texto)
+        coincidencia_texto = re.search(r"(?:el\s+)?(\d{1,2})\s+de\s+([a-z]+)(?:\s+de\s+(\d{2,4}))?", fecha_texto)
         if coincidencia_texto:
             dia, nombre_mes, anio = coincidencia_texto.groups()
             mes = self.MESES.get(nombre_mes)
             if not mes:
                 return None, descripcion
             anio = int(anio) if anio else hoy.year
+            if anio < 100:
+                anio += 2000
+            if anio < hoy.year:
+                # Si el reconocimiento de voz interpretó 2007 en vez de 2027 o un año pasado
+                if str(anio).endswith("07"):
+                    anio = 2027
+                else:
+                    anio = hoy.year + 1
             try:
                 fecha = datetime.date(anio, mes, int(dia))
                 if not coincidencia_texto.group(3) and fecha < hoy:
@@ -116,11 +124,17 @@ class AgendaManager:
 
     def agregar_evento(self, descripcion_evento):
         fecha_limite, descripcion = self.extraer_fecha_limite(descripcion_evento)
-        descripcion = descripcion.strip()
+        descripcion = descripcion.strip(" ,.-")
+        
+        # Limpiar palabras iniciales comunes como "guardar", "anotar", "agendar", etc.
+        for pref in ["guardar", "guarda", "agendar", "agenda", "anotar", "anota", "recordar", "recuerda", "agregar", "agrega", "que"]:
+            if descripcion.lower().startswith(pref + " "):
+                descripcion = descripcion[len(pref):].strip(" ,.-")
+
         if not descripcion:
             return "No entendí qué deseas guardar. Di: guardar tomar medicina hasta el 25 de septiembre."
         if not fecha_limite:
-            return "Para guardarlo necesito la fecha límite. Di: hasta el día, mes y año, por ejemplo hasta el 25 de septiembre de 2026."
+            return "Para guardarlo necesito la fecha límite. Di: hasta el día, mes y año, por ejemplo hasta el 25 de septiembre de 2027."
 
         creado = datetime.datetime.now()
         nuevo_item = {
