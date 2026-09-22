@@ -8,7 +8,16 @@ import urllib.error
 import threading
 import socket
 import ssl
-from kivy.clock import Clock
+try:
+    from kivy.clock import Clock
+except Exception:
+    class Clock:
+        @staticmethod
+        def schedule_once(callback, delay=0):
+            if delay <= 0:
+                callback(0)
+            else:
+                threading.Timer(delay, lambda: callback(0)).start()
 
 def _directorio_datos_app():
     """Devuelve el directorio de datos persistente seguro para Android y PC."""
@@ -84,15 +93,22 @@ def obtener_nivel_bateria():
     return "No se pudo obtener el porcentaje de batería en este dispositivo."
 
 class AIAssistant:
-    MODELOS_PRIORITARIOS = [
-        "gemini-3.6-flash",
-        "gemini-3.8-flash",
-        "gemini-flash-latest",
-        "gemini-3.5-flash",
-        "gemini-3.5-flash-lite",
-        "gemini-3.1-flash-lite",
+    MODELOS_OBSOLETOS = {
+        "gemini-1.5-flash",
+        "gemini-1.5-pro",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
         "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
+        "gemini-2.5-pro",
+    }
+
+    MODELOS_PRIORITARIOS = [
+        "gemini-3.6-flash",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
     ]
 
     def __init__(self, directorio_datos=None):
@@ -308,18 +324,18 @@ class AIAssistant:
         return self._extraer_texto_respuesta(res_json)
 
     def _obtener_modelos_candidatos(self):
-        """Devuelve la lista ordenada de modelos candidatos, priorizando el modelo activo o descubierto."""
+        """Devuelve la lista ordenada de modelos candidatos válidos (excluyendo obsoletos y limitando a 4)."""
         candidatos = []
-        if self.modelo_activo:
+        if self.modelo_activo and self.modelo_activo not in self.MODELOS_OBSOLETOS:
             candidatos.append(self.modelo_activo)
         if self._modelos_detectados_cache:
             for m in self._modelos_detectados_cache:
-                if m not in candidatos:
+                if m not in candidatos and m not in self.MODELOS_OBSOLETOS:
                     candidatos.append(m)
         for p in self.MODELOS_PRIORITARIOS:
-            if p not in candidatos:
+            if p not in candidatos and p not in self.MODELOS_OBSOLETOS:
                 candidatos.append(p)
-        return candidatos
+        return candidatos[:4]
 
     def _detectar_modelos_disponibles_api(self):
         """Descubre automáticamente qué modelos Flash están activos y autorizados para la clave."""
@@ -329,14 +345,20 @@ class AIAssistant:
         url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
         try:
             req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=4) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     detectados = []
                     for m in data.get("models", []):
                         nombre = m.get("name", "").replace("models/", "")
                         metodos = m.get("supportedGenerationMethods", [])
-                        if "generateContent" in metodos and ("flash" in nombre or "gemini" in nombre) and "tts" not in nombre and "image" not in nombre:
+                        if (
+                            "generateContent" in metodos 
+                            and ("flash" in nombre or "gemini" in nombre) 
+                            and "tts" not in nombre 
+                            and "image" not in nombre
+                            and nombre not in self.MODELOS_OBSOLETOS
+                        ):
                             detectados.append(nombre)
                     # Reordenar según prioridad
                     ordenados = []
@@ -344,7 +366,7 @@ class AIAssistant:
                         if p in detectados:
                             ordenados.append(p)
                     for o in detectados:
-                        if o not in ordenados:
+                        if o not in ordenados and o not in self.MODELOS_OBSOLETOS:
                             ordenados.append(o)
                     self._modelos_detectados_cache = ordenados
                     return ordenados
@@ -456,6 +478,11 @@ class AIAssistant:
             modelo_usado = self.modelo_activo or "Gemini Flash"
             return True, f"Clave API comprobada exitosamente con {modelo_usado}. Gemini está listo."
 
+        # Si el error fue de cuota (429), la clave es válida y conectó con Google
+        if "cuota" in (self.ultimo_error_config or "").lower() or "429" in (self.ultimo_error_config or "") or "límite de peticiones" in (respuesta or "").lower():
+            modelo_usado = self.modelo_activo or "gemini-3.6-flash"
+            return True, f"Clave API válida y verificada con Google ({modelo_usado}). Cuota por minuto alcanzada temporalmente; estará disponible enseguida."
+
         mensaje = self.ultimo_error_config or "Gemini no respondió. Revisa internet, cuota o permisos de la clave."
         return False, mensaje
 
@@ -533,15 +560,23 @@ class AIAssistant:
 
         # Modelos compatibles de Gemini en orden de rapidez y cuota
         modelos = self._obtener_modelos_candidatos()
+        hubo_cuota = False
         
         for model in modelos:
             try:
-                txt_limpio = self._post_gemini(model, payload, timeout_segundos=9)
+                txt_limpio = self._post_gemini(model, payload, timeout_segundos=6)
                 if txt_limpio:
                     return txt_limpio
+                if "429" in (self.ultimo_error_config or "") or "cuota" in (self.ultimo_error_config or "").lower():
+                    hubo_cuota = True
             except Exception as e:
                 self._registrar_error_gemini(model, e)
+                if "429" in (self.ultimo_error_config or ""):
+                    hubo_cuota = True
                 continue
+
+        if hubo_cuota:
+            return "La clave de Gemini está activa, pero alcanzó el límite de peticiones por minuto en la cuenta gratuita de Google AI Studio. Espera un minuto e inténtalo de nuevo."
 
         error_detalle = self.ultimo_error_config or "Verifica tu conexión a internet o tu clave API."
         return f"No se pudo conectar con Gemini. {error_detalle}"
