@@ -107,11 +107,14 @@ class AIAssistant:
         return "".join(key.split())
 
     def es_api_key_gemini_valida(self, api_key):
-        """Validación local básica para evitar guardar claves de otro servicio."""
+        """Validación local para admitir las claves oficiales de Google AI Studio (AQ. y AIza)."""
         key = self.limpiar_api_key(api_key)
-        if (key.startswith("AIza") or key.startswith("AQ.")) and len(key) >= 30:
+        if not key:
+            return False
+        # Google AI Studio genera Authorization Keys que empiezan con 'AQ.' (o 'AQ') y Standard Keys ('AIza')
+        if (key.startswith("AIza") or key.startswith("AQ.") or key.startswith("AQ")) and len(key) >= 20:
             return True
-        if len(key) >= 35 and key.isalnum():
+        if len(key) >= 25:
             return True
         return False
 
