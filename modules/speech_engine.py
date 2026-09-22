@@ -70,8 +70,8 @@ class SpeechEngine:
                         return data
         except Exception:
             pass
-        # Por defecto configuración estilo Optimus Prime
-        return {"nombre": "optimus", "velocidad": 0.88, "tono": 0.68, "genero": "masculina"}
+        # Por defecto configuración estilo persona animada y amigable
+        return {"nombre": "asistente", "velocidad": 1.05, "tono": 1.08, "genero": "animada"}
 
     def _guardar_config(self):
         try:
@@ -88,44 +88,39 @@ class SpeechEngine:
 
     def cambiar_velocidad(self, delta):
         """Aumenta o disminuye la velocidad de la voz."""
-        nueva_vel = max(0.60, min(1.3, self.velocidad_voz + delta))
+        nueva_vel = max(0.85, min(1.3, self.velocidad_voz + delta))
         self.velocidad_voz = round(nueva_vel, 2)
         self._guardar_config()
         self._aplicar_parametros_tts_android()
         modo = "rápido" if delta > 0 else "pausado"
-        self.hablar(f"Velocidad ajustada a ritmo {modo}.")
+        self.hablar(f"Velocidad ajustada a ritmo {modo}.", perfil="animada")
 
-    def cambiar_tono(self, nuevo_tono=None, modo="optimus"):
-        """Permite fijar el tono robótico de Optimus Prime o alternar."""
+    def cambiar_tono(self, nuevo_tono=None, modo="animada"):
+        """Permite alternar entre un tono animado natural o extra vivaz."""
         if nuevo_tono is not None:
             self.tono_voz = float(nuevo_tono)
-        elif modo == "optimus":
-            self.tono_voz = 0.68
-            self.velocidad_voz = 0.88
-            self.genero_voz = "masculina"
         else:
-            if self.tono_voz <= 0.8:
-                self.tono_voz = 1.05
-                self.genero_voz = "femenina"
+            if self.tono_voz < 1.10:
+                self.tono_voz = 1.12
             else:
-                self.tono_voz = 0.68
-                self.genero_voz = "masculina"
+                self.tono_voz = 1.05
 
+        self.genero_voz = "animada"
         self._guardar_config()
         self._aplicar_parametros_tts_android()
-        self.hablar("Tono Optimus Prime activado.")
+        self.hablar("Tono de voz animado activado.", perfil="animada")
 
     def _reconstruir_palabras_activacion(self):
         nombre = self.nombre_asistente
         self.palabras_activacion = [
             nombre,
-            "optimus",
-            "optimus prime",
-            "prime",
+            "asistente",
+            "copiloto",
+            "amigo",
             f"oye {nombre}",
             f"hola {nombre}",
             f"ok {nombre}",
-            "bastón", "baston", "asistente"
+            "bastón", "baston"
         ]
 
     def actualizar_nombre_asistente(self, nuevo_nombre):
@@ -136,32 +131,26 @@ class SpeechEngine:
         self.nombre_asistente = nombre_limpio
         self._reconstruir_palabras_activacion()
         self._guardar_config()
-        self.hablar(f"Identidad actualizada a {self.nombre_asistente.capitalize()}. Listo para servir.")
+        self.hablar(f"Identidad actualizada a {self.nombre_asistente.capitalize()}. ¡Listo para ayudarte!", perfil="animada")
 
-    def _aplicar_parametros_tts_android(self, perfil="normal"):
-        """Aplica la velocidad, tono e idioma en el motor nativo de Android según el perfil acústico."""
+    def _aplicar_parametros_tts_android(self, perfil="animada"):
+        """Aplica la velocidad, tono e idioma en el motor nativo de Android con estilo de persona animada."""
         if not self.tts or not getattr(self, 'tts_listo', False):
             return
         try:
             if perfil == "alerta":
-                # Perfil Sensor/Alerta Bastón: Agudo, rápido y enérgico (Contraste total de aviso de peligro)
-                pitch = 1.25
-                rate = 1.20
-                tipo_voz = "femenina"
-            elif perfil in ("optimus", "ia"):
-                # Perfil Optimus Prime (Blas García): Cavernoso, grave, firme y solemne
-                pitch = 0.52
-                rate = 0.80
-                tipo_voz = "masculina"
+                # Alerta rápida y clara del sensor
+                pitch = 1.18
+                rate = 1.15
             else:
-                pitch = float(self.tono_voz)
-                rate = float(self.velocidad_voz)
-                tipo_voz = self.genero_voz
+                # Voz de persona animada, alegre, natural y cordial
+                pitch = 1.08
+                rate = 1.05
 
             self.tts.setPitch(pitch)
             self.tts.setSpeechRate(rate)
 
-            # Asignar la mejor voz del sistema para acentuar la diferencia tímbrica
+            # Asignar la mejor voz fluida en español de Google / Android
             try:
                 voices = self.tts.getVoices()
                 if voices:
@@ -171,14 +160,10 @@ class SpeechEngine:
                         nombre_v = voice.getName().lower()
                         locale_v = voice.getLocale().getLanguage()
                         if locale_v == "es":
-                            if tipo_voz == "femenina":
-                                if any(k in nombre_v for k in ["female", "fem", "ana", "es-es-x-ana"]):
-                                    self.tts.setVoice(voice)
-                                    break
-                            else:
-                                if any(k in nombre_v for k in ["male", "masc", "es-es-x-sfb", "es-us-x-sfb", "spa-es-male"]):
-                                    self.tts.setVoice(voice)
-                                    break
+                            # Priorizar voces animadas, claras y naturales
+                            if any(k in nombre_v for k in ["natural", "neural", "es-es-x-ana", "es-us-x-sfd", "female", "ana", "es-es"]):
+                                self.tts.setVoice(voice)
+                                break
             except Exception:
                 pass
         except Exception as e:
@@ -286,11 +271,11 @@ class SpeechEngine:
 
                 self.reproduciendo_tts = True
 
-                rate_pc = -2
+                rate_pc = 1
                 if perfil_item == "alerta":
-                    rate_pc = 3
-                elif perfil_item in ("optimus", "ia"):
-                    rate_pc = -3
+                    rate_pc = 2
+                elif perfil_item in ("animada", "ia", "normal"):
+                    rate_pc = 1
 
                 if sp_voice:
                     try:
@@ -300,7 +285,7 @@ class SpeechEngine:
                     sp_voice.Speak(texto_str)
                 elif engine:
                     try:
-                        engine.setProperty('rate', 195 if perfil_item == "alerta" else (125 if perfil_item in ("optimus", "ia") else 145))
+                        engine.setProperty('rate', 190 if perfil_item == "alerta" else 165)
                     except Exception:
                         pass
                     engine.say(texto_str)
@@ -383,19 +368,12 @@ class SpeechEngine:
         Clock.schedule_once(lambda dt: self.hablar(texto, perfil="alerta"), 0)
 
     def hablar_respuesta_ia(self, texto, callback_fin=None):
-        """Perfil Optimus Prime (Blas García): Cavernoso, solemne y grave.
-        Funciona 100% nativo y offline en el teléfono, ideal para presentaciones sin PC."""
+        """Voz animada, natural, alegre y cordial para las respuestas de la IA."""
         if not texto:
             return
 
-        # Si hay un archivo de audio local pregrabado correspondiente, reproducirlo
-        audio_local = getattr(self, '_buscar_audio_pregrabado', lambda t: None)(texto)
-        if audio_local and os.path.exists(audio_local):
-            self.reproducir_audio(audio_local, callback_fin=callback_fin)
-            return
-
-        # Respuesta nativa offline inmediata con el perfil imponente de Optimus Prime
-        Clock.schedule_once(lambda dt: self.hablar(texto, perfil="optimus"), 0)
+        # Respuesta nativa inmediata con perfil animado
+        Clock.schedule_once(lambda dt: self.hablar(texto, perfil="animada"), 0)
 
     def _obtener_audio_clonado_servidor(self, texto):
         """Envía el texto al servidor XTTS con la muestra optimus_muestra.wav de Blas García."""

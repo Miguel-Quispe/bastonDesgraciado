@@ -298,9 +298,9 @@ class BastonApp(App):
         except Exception as e:
             print(f"[BastonApp] Bluetooth auto-reconexion: {e}")
 
-        mensaje_bienvenida = "Soy Optimus Prime, tu copiloto visual. Control por gestos y voz activo. Muestra tu palma abierta o di tu orden."
+        mensaje_bienvenida = "¡Hola! Soy tu copiloto visual. Control por gestos y voz activo. ¡Muestra tu palma abierta o dime en qué te ayudo!"
         try:
-            self.voz.hablar(mensaje_bienvenida)
+            self.voz.hablar(mensaje_bienvenida, perfil="animada")
         except Exception:
             pass
 
@@ -415,9 +415,9 @@ class BastonApp(App):
         # NODO 0A: Presentación Oficial del Proyecto ante el Jurado
         if any(w in texto for w in ["presentar proyecto", "presentacion", "presentate", "saludo jurado", "explicar proyecto", "que es este proyecto"]):
             intro_jurado = (
-                "Saludos, distinguidos miembros del jurado. Soy Optimus Prime, sistema integral de asistencia y navegación "
+                "¡Hola, distinguidos miembros del jurado! Soy el copiloto inteligente de asistencia y navegación "
                 "para personas con discapacidad visual. Cuento con detección ultrasónica en el bastón, visión artificial por cámara "
-                "para detección de obstáculos y lectura de documentos, además de inteligencia artificial. El bastón inteligente se encuentra en línea."
+                "para detección de obstáculos y lectura de documentos, además de inteligencia artificial. ¡El bastón inteligente se encuentra en línea y listo para la demostración!"
             )
             self.lbl_estado.text = "Presentando proyecto al jurado..."
             self.voz.hablar_respuesta_ia(intro_jurado)
@@ -426,8 +426,8 @@ class BastonApp(App):
         # NODO 0: Saludo y Activación por voz
         if any(w in texto for w in ["hola", "saludo", "buenas", "activado", "estas ahi", "ayuda", "quien eres"]):
             nombre_act = self.voz.nombre_asistente.capitalize()
-            self.voz.hablar(f"Hola, soy tu asistente {nombre_act}. Te escucho. Puedo ayudarte con la cámara, agenda, batería, ubicación, guiado de ruta o preguntas.")
-            self.lbl_estado.text = "Asistente activo. Te escucho."
+            self.voz.hablar(f"¡Hola! Soy tu {nombre_act} de asistencia. ¡Te escucho! Puedo ayudarte con la cámara, agenda, batería, ubicación, guiado de ruta o responder cualquier duda.", perfil="animada")
+            self.lbl_estado.text = "Asistente activo. ¡Te escucho!"
             return
 
         # NODO 1: Batería Actual (Respuesta inmediata precisa con nivel real)
