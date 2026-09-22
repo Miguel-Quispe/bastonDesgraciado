@@ -172,9 +172,13 @@ class SpeechEngine:
     def _inicializar_android(self):
         try:
             from jnius import autoclass, PythonJavaClass, java_method
-            self.TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
             self.PythonActivity = autoclass('org.kivy.android.PythonActivity')
-            self.activity = self.PythonActivity.mActivity
+            self.activity = getattr(self.PythonActivity, 'mActivity', None)
+            if not self.activity:
+                print("[SpeechEngine] mActivity no disponible aún.")
+                return
+
+            self.TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
             self.tts_listo = False
 
             class TTSInitListener(PythonJavaClass):
@@ -185,55 +189,54 @@ class SpeechEngine:
 
                 @java_method('(I)V')
                 def onInit(self, status):
-                    if status == 0:
-                        self.engine.tts_listo = True
-                        try:
-                            Locale = autoclass('java.util.Locale')
-                            self.engine.tts.setLanguage(Locale("es", "ES"))
-                        except Exception:
-                            pass
-                        self.engine._configurar_listener_fin_locucion()
-                        self.engine._aplicar_parametros_tts_android()
+                    try:
+                        if status == 0:
+                            self.engine.tts_listo = True
+                            try:
+                                Locale = autoclass('java.util.Locale')
+                                self.engine.tts.setLanguage(Locale("es", "ES"))
+                            except BaseException:
+                                pass
+                            self.engine._configurar_listener_fin_locucion()
+                            self.engine._aplicar_parametros_tts_android()
+                    except BaseException as ex:
+                        print(f"[SpeechEngine] Aviso en callback onInit: {ex}")
 
             self.tts_listener = TTSInitListener(self)
             self.tts = self.TextToSpeech(self.activity, self.tts_listener)
-        except Exception:
+        except BaseException as e:
+            print(f"[SpeechEngine] Aviso al inicializar TTS en Android: {e}")
             self.tts = None
             self.tts_listo = False
 
     def _configurar_listener_fin_locucion(self):
-        """Usa UtteranceProgressListener para saber EXACTAMENTE cuándo termina de hablar y no cortar la frase."""
+        """Configura el callback de fin de locución de forma 100% segura mediante OnUtteranceCompletedListener (interfaz nativa)."""
+        if not self.tts:
+            return
         try:
             from jnius import autoclass, PythonJavaClass, java_method
             
+            # OnUtteranceCompletedListener es una INTERFAZ nativa válida en Android y compatible con PyJNIus
             class FinLocucionListener(PythonJavaClass):
-                __javainterfaces__ = ['android/speech/tts/UtteranceProgressListener']
+                __javainterfaces__ = ['android/speech/tts/TextToSpeech$OnUtteranceCompletedListener']
                 def __init__(self, engine):
                     super().__init__()
                     self.engine = engine
 
                 @java_method('(Ljava/lang/String;)V')
-                def onStart(self, utteranceId):
-                    self.engine.reproduciendo_tts = True
-
-                @java_method('(Ljava/lang/String;)V')
-                def onDone(self, utteranceId):
+                def onUtteranceCompleted(self, utteranceId):
                     def al_completar(dt):
                         self.engine.reproduciendo_tts = False
                         if self.engine.escuchando:
                             self.engine._reiniciar_escucha_android()
-                    Clock.schedule_once(al_completar, 0.4)
-
-                @java_method('(Ljava/lang/String;)V')
-                def onError(self, utteranceId):
-                    def al_error(dt):
-                        self.engine.reproduciendo_tts = False
-                    Clock.schedule_once(al_error, 0.2)
+                    Clock.schedule_once(al_completar, 0.3)
 
             self.tts_progress_listener = FinLocucionListener(self)
-            self.tts.setOnUtteranceProgressListener(self.tts_progress_listener)
-        except Exception as e:
-            print(f"[SpeechEngine] UtteranceProgressListener no disponible: {e}")
+            self.tts.setOnUtteranceCompletedListener(self.tts_progress_listener)
+            print("[SpeechEngine] Listener de fin de locución activo.")
+        except BaseException as e:
+            print(f"[SpeechEngine] Listener de fin de locución omitido (se usará temporizador seguro): {e}")
+            self.tts_progress_listener = None
 
     def _loop_tts_pc(self):
         sp_voice = None

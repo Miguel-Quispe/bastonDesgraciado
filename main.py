@@ -341,46 +341,63 @@ class BastonApp(App):
                 Permission.ACCESS_COARSE_LOCATION,
             ]
             try:
-                permisos.append(Permission.BLUETOOTH_CONNECT)
-                permisos.append(Permission.BLUETOOTH_SCAN)
-            except AttributeError:
-                pass
+                from jnius import autoclass
+                VERSION = autoclass('android.os.Build$VERSION')
+                sdk_int = int(getattr(VERSION, 'SDK_INT', 30))
+            except BaseException:
+                sdk_int = 30
+
+            # BLUETOOTH_CONNECT y BLUETOOTH_SCAN solo existen y se piden en Android 12+ (API 31+)
+            if sdk_int >= 31:
+                try:
+                    permisos.append(Permission.BLUETOOTH_CONNECT)
+                    permisos.append(Permission.BLUETOOTH_SCAN)
+                except (AttributeError, BaseException):
+                    pass
             
             def callback_permisos(permissions, grants):
-                audio_concedido = True
-                camara_concedida = True
-                try:
-                    for permiso, concedido in zip(permissions, grants):
-                        permitido = concedido if isinstance(concedido, bool) else int(concedido) == 0
-                        if str(permiso).endswith("RECORD_AUDIO"):
-                            audio_concedido = permitido
-                        elif str(permiso).endswith("CAMERA"):
-                            camara_concedida = permitido
-                except Exception:
-                    pass
+                def procesar(dt):
+                    audio_concedido = True
+                    camara_concedida = True
+                    try:
+                        for permiso, concedido in zip(permissions, grants):
+                            permitido = concedido if isinstance(concedido, bool) else int(concedido) == 0
+                            if str(permiso).endswith("RECORD_AUDIO"):
+                                audio_concedido = permitido
+                            elif str(permiso).endswith("CAMERA"):
+                                camara_concedida = permitido
+                    except BaseException:
+                        pass
 
-                self.permiso_camara_concedido = camara_concedida
-                if not audio_concedido:
-                    self.lbl_estado.text = "Permiso de micrófono denegado. Actívalo para usar comandos de voz."
-                    self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes.")
-                    return
+                    self.permiso_camara_concedido = camara_concedida
+                    if not audio_concedido:
+                        self.lbl_estado.text = "⚠️ Micrófono denegado\n\n[size=14sp]Actívalo en Ajustes de Android para hablar con el asistente[/size]"
+                        try:
+                            self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes.")
+                        except BaseException:
+                            pass
+                        return
 
-                Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
+                    Clock.schedule_once(lambda dt2: self.iniciar_control_por_gesto(), 1.0)
+
+                Clock.schedule_once(procesar, 0.1)
 
             request_permissions(permisos, callback_permisos)
-        except Exception as e:
-            print(f"[BastonApp] Permisos nativos: {e}")
+        except BaseException as e:
+            print(f"[BastonApp] Permisos nativos no disponibles o error: {e}")
+            Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
     def emitir_vibracion_bienvenida(self):
         try:
             from jnius import autoclass
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             Context = autoclass('android.content.Context')
-            activity = PythonActivity.mActivity
-            vibrator = activity.getSystemService(Context.VIBRATOR_SERVICE)
-            if vibrator:
-                vibrator.vibrate(250)
-        except Exception:
+            activity = getattr(PythonActivity, 'mActivity', None)
+            if activity:
+                vibrator = activity.getSystemService(Context.VIBRATOR_SERVICE)
+                if vibrator:
+                    vibrator.vibrate(250)
+        except BaseException:
             pass
 
     def on_start(self):
@@ -391,39 +408,36 @@ class BastonApp(App):
         try:
             from android import activity
             activity.bind(on_activity_result=self.al_recibir_resultado_actividad)
-        except Exception:
+        except BaseException:
             pass
 
         try:
             self.bt.iniciar_auto_reconexion(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
-        except Exception as e:
+        except BaseException as e:
             print(f"[BastonApp] Bluetooth auto-reconexion: {e}")
 
         mensaje_bienvenida = "Asistente listo. Muestra tu palma abierta frente a la cámara trasera para dar un comando."
         try:
             self.voz.hablar(mensaje_bienvenida, perfil="animada")
-        except Exception:
+        except BaseException:
             pass
 
-        self.lbl_estado.text = "Muestra la palma abierta frente a la cámara para ordenar."
-        self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
-        self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
-        self.btn_accion.color = (1, 1, 1, 1)
+        self.lbl_estado.text = "✋ ESPERANDO PALMA\n\n[size=14sp]Coloca tu mano frente a la cámara o toca la pantalla abajo[/size]"
+        self.btn_accion.text = "HABLAR AHORA\nTOCA EN CUALQUIER PARTE"
+        self.btn_accion.background_color = (0.06, 0.72, 0.45, 1)
+        self.btn_accion.color = (0, 0, 0, 1)
 
     def iniciar_control_por_gesto(self):
-        if not self.voz.activity or self._camara_en_uso_por_comando or self.gps.navegacion_activa:
-            return
-        iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
-        if iniciado:
-            self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
-            self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
-            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
-            self.btn_accion.color = (1, 1, 1, 1)
-        else:
-            self.lbl_estado.text = "Asistente listo. Presiona el botón para dar una orden."
-            self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
-            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
-            self.btn_accion.color = (1, 1, 1, 1)
+        try:
+            if not getattr(self.voz, 'activity', None) or self._camara_en_uso_por_comando or self.gps.navegacion_activa:
+                return
+            iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
+            if iniciado:
+                self.lbl_estado.text = "✋ ESPERANDO PALMA\n\n[size=14sp]Coloca tu mano frente a la cámara o toca la pantalla abajo[/size]"
+            else:
+                self.lbl_estado.text = "✋ ASISTENTE LISTO\n\n[size=14sp]Toca el botón abajo para dar una orden por voz[/size]"
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en iniciar_control_por_gesto: {e}")
 
     def activar_comando_por_gesto(self):
         """

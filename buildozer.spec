@@ -55,7 +55,7 @@ android.ndk_api = 24
 android.accept_sdk_license = True
 
 # (list) List of Android architectures to build for
-android.archs = arm64-v8a
+android.archs = arm64-v8a, armeabi-v7a
 
 # (bool) Copy library instead of making a symlink
 android.copy_libs = 1

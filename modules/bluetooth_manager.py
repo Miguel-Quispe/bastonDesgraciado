@@ -16,6 +16,10 @@ class BluetoothManager:
         self._tiempo_ultima_alerta = 0.0
         self.desconexion_voluntaria = False
 
+    def esta_conectado(self):
+        """Retorna True si el socket Bluetooth está activo y conectado."""
+        return bool(getattr(self, 'conectado', False))
+
     def _procesar_caracteres_baston(self, datos_bytes, callback_alerta):
         """
         Protocolo según los bloques de App Inventor del Bastón:
