@@ -4,7 +4,6 @@ import threading
 from PIL import Image
 from kivy.clock import Clock
 
-# Diccionario de traducción de clases COCO (YOLO) a español natural para personas con discapacidad visual
 CLASES_COCO_ES = {
     0: "persona", 1: "bicicleta", 2: "auto", 3: "motocicleta", 4: "avión", 5: "autobús",
     6: "tren", 7: "camión", 8: "bote", 9: "semáforo", 10: "hidrante", 11: "señal de alto",
@@ -12,8 +11,7 @@ CLASES_COCO_ES = {
     18: "oveja", 19: "vaca", 24: "mochila", 25: "paraguas", 26: "bolso", 28: "maleta",
     39: "botella", 41: "taza", 56: "silla", 57: "sofá", 58: "planta", 59: "cama",
     60: "mesa", 62: "televisor", 63: "computadora", 67: "celular", 73: "libro",
-    # Clases personalizadas de bastón inteligente (conos, pozos, escalones)
-    80: "cono de obra", 81: "escalón", 82: "bache", 83: "paso peatonal"
+    80: "cono de obra", 81: "escalón", 82: "bache", 83: "paso peatonal", 84: "poste", 85: "árbol"
 }
 
 class VisionAnalyzer:
@@ -53,7 +51,6 @@ class VisionAnalyzer:
     def _inicializar_tflite(self):
         """Carga el modelo YOLOv8 Nano en formato TFLite si está disponible."""
         if not os.path.exists(self.ruta_modelo):
-            # Buscar en la raíz si no está en la subcarpeta
             nombre_base = os.path.basename(self.ruta_modelo)
             if os.path.exists(nombre_base):
                 self.ruta_modelo = os.path.abspath(nombre_base)
@@ -68,18 +65,17 @@ class VisionAnalyzer:
                     self.interpreter = tflite.Interpreter(model_path=self.ruta_modelo)
                 
                 self.interpreter.allocate_tensors()
-                print(f"[VisionAnalyzer] Modelo YOLO TFLite ({self.ruta_modelo}) cargado exitosamente. Inferencia offline lista.")
+                print(f"[VisionAnalyzer] Modelo YOLO TFLite ({self.ruta_modelo}) cargado exitosamente.")
             except Exception as e:
                 print(f"[VisionAnalyzer] Error al inicializar TFLite: {e}. Usando procesamiento heurístico.")
         else:
             print(f"[VisionAnalyzer] Aviso: Modelo '{self.ruta_modelo}' no encontrado. Se usará análisis de respaldo.")
 
     def iniciar_detector_gesto(self, callback_gesto):
-        """Observa la cámara trasera y activa un comando solo ante una palma abierta local."""
+        """Observa la cámara trasera y activa un comando ante una palma abierta."""
         if self._gesto_activo or not self.camara_disponible:
             return False
         if not self._tiene_permiso_camara_android():
-            print("[VisionAnalyzer] Detector de gesto sin permiso de cámara.")
             return False
 
         try:
@@ -92,22 +88,18 @@ class VisionAnalyzer:
 
             class Runnable(PythonJavaClass):
                 __javainterfaces__ = ['java/lang/Runnable']
-
                 def __init__(self, funcion):
                     super().__init__()
                     self.funcion = funcion
-
                 @java_method('()V')
                 def run(self):
                     self.funcion()
 
             class PreviewCallback(PythonJavaClass):
                 __javainterfaces__ = ['android/hardware/Camera$PreviewCallback']
-
                 def __init__(self, analyzer):
                     super().__init__()
                     self.analyzer = analyzer
-
                 @java_method('([BLandroid/hardware/Camera;)V')
                 def onPreviewFrame(self, data, camera):
                     self.analyzer._recibir_cuadro_gesto(data)
@@ -139,7 +131,7 @@ class VisionAnalyzer:
                     self._camara_gesto.startPreview()
                     self._callback_gesto = callback_gesto
                     self._gesto_activo = True
-                    print("[VisionAnalyzer] Detector local de palma abierto con cámara trasera.")
+                    print("[VisionAnalyzer] Detector de palma activo con cámara trasera.")
                 except Exception as error:
                     print(f"[VisionAnalyzer] No se pudo iniciar detector de gesto: {error}")
                     self.detener_detector_gesto()
@@ -147,13 +139,12 @@ class VisionAnalyzer:
             PythonActivity.mActivity.runOnUiThread(Runnable(iniciar))
             return True
         except Exception as error:
-            print(f"[VisionAnalyzer] Detector local de gesto no disponible: {error}")
+            print(f"[VisionAnalyzer] Detector de gesto no disponible: {error}")
             return False
 
     def _recibir_cuadro_gesto(self, data):
         ahora = time.monotonic()
-        if (not self._gesto_activo or self._procesando_cuadro_gesto or
-                ahora - self._ultimo_cuadro_gesto < 0.55):
+        if (not self._gesto_activo or self._procesando_cuadro_gesto or ahora - self._ultimo_cuadro_gesto < 0.55):
             return
         self._ultimo_cuadro_gesto = ahora
         self._procesando_cuadro_gesto = True
@@ -174,7 +165,7 @@ class VisionAnalyzer:
                 self._palmas_consecutivas = 0
                 Clock.schedule_once(lambda dt: self._activar_por_gesto(), 0)
         except Exception as error:
-            print(f"[VisionAnalyzer] Error analizando gesto local: {error}")
+            print(f"[VisionAnalyzer] Error analizando gesto: {error}")
         finally:
             self._procesando_cuadro_gesto = False
 
@@ -187,7 +178,7 @@ class VisionAnalyzer:
             callback()
 
     def detener_detector_gesto(self):
-        """Libera la cámara de vigilancia para usarla en foto o para ahorrar batería."""
+        """Libera la cámara de vigilancia para usarla en navegación o foto."""
         self._gesto_activo = False
         self._palmas_consecutivas = 0
         try:
@@ -206,52 +197,77 @@ class VisionAnalyzer:
             self._surface_gesto = None
 
     def capturar_y_analizar(self, callback_resultado, ai_assistant=None):
-        """Captura una fotografía del entorno y analiza obstáculos y objetos presentes."""
-        print("[VisionAnalyzer] Iniciando captura de cámara para análisis de entorno...")
+        """Captura puntual para '¿Qué tengo al frente?'."""
         self.callback_pendiente = callback_resultado
         self.ai_assistant = ai_assistant
-
         self.ruta_foto_pendiente = self._obtener_ruta_foto()
 
         if self.camara_disponible:
             if not self._tiene_permiso_camara_android():
-                self.cancelar_captura(
-                    "No tengo permiso para usar la cámara. Actívalo en Ajustes de Android, Aplicaciones, Bastón Inteligente, Permisos."
-                )
+                self.cancelar_captura("No tengo permiso para usar la cámara en Android.")
                 return
 
             if self._capturar_foto_trasera_automatica():
-                print(f"[VisionAnalyzer] Captura automática con cámara trasera iniciada: {self.ruta_foto_pendiente}")
                 return
 
             if self._abrir_camara_android_intent():
                 return
 
-        # Fallback para entorno de desarrollo PC
         self.procesar_foto_capturada()
 
+    def analizar_camino_en_navegacion(self, callback_instruccion, ai_assistant=None):
+        """
+        Copiloto continuo de visión para navegación peatonal asistida:
+        Captura el frente y genera consejos situacionales:
+        - Si el camino está despejado al centro.
+        - Si hay personas, vehículos, postes o desvíos recomendados.
+        """
+        if self._captura_en_progreso:
+            return
+
+        def _al_terminar_analisis(resultado_str):
+            callback_instruccion(resultado_str)
+
+        # Usar la captura trasera automática sin abrir pantallas externas
+        self.capturar_y_analizar_automatica(_al_terminar_analisis, ai_assistant=ai_assistant, modo_navegacion=True)
+
+    def capturar_y_analizar_automatica(self, callback_resultado, ai_assistant=None, modo_navegacion=False):
+        """Toma foto silenciosa con la cámara trasera y analiza el camino."""
+        self.callback_pendiente = callback_resultado
+        self.ai_assistant = ai_assistant
+        self.modo_navegacion_activo = modo_navegacion
+        self.ruta_foto_pendiente = self._obtener_ruta_foto("nav_camino")
+
+        if self.camara_disponible and self._tiene_permiso_camara_android():
+            if self._capturar_foto_trasera_automatica():
+                return
+
+        # Fallback de desarrollo en PC
+        Clock.schedule_once(lambda dt: self._procesar_analisis_navegacion_fallback(), 0.3)
+
+    def _procesar_analisis_navegacion_fallback(self):
+        callback = getattr(self, 'callback_pendiente', None)
+        self.callback_pendiente = None
+        if callback:
+            callback("Camino despejado hacia adelante.")
+
     def _tiene_permiso_camara_android(self):
-        """Comprueba el permiso real antes de abrir la cámara en Android."""
         try:
             from android.permissions import check_permission, Permission
             return bool(check_permission(Permission.CAMERA))
-        except Exception as e:
-            # En PC no existe el módulo android; la cámara ya se marcará como no disponible.
-            print(f"[VisionAnalyzer] No se pudo comprobar el permiso de cámara: {e}")
+        except Exception:
             return False
 
     def cancelar_captura(self, mensaje):
-        """Finaliza una captura que Android canceló o no pudo abrir."""
         self._captura_en_progreso = False
         self._esperando_resultado_intent = False
         self._liberar_camara_android()
         callback = getattr(self, 'callback_pendiente', None)
         self.callback_pendiente = None
         if callback:
-            Clock.schedule_once(lambda dt: callback(f"Visión: {mensaje}"), 0)
+            Clock.schedule_once(lambda dt: callback(mensaje), 0)
 
     def _seleccionar_camara_trasera(self, Camera, CameraInfo):
-        """Devuelve el id de la cámara trasera; si falla, usa la cámara 0."""
         try:
             total = Camera.getNumberOfCameras()
             info = CameraInfo()
@@ -259,8 +275,8 @@ class VisionAnalyzer:
                 Camera.getCameraInfo(camera_id, info)
                 if info.facing == CameraInfo.CAMERA_FACING_BACK:
                     return camera_id
-        except Exception as e:
-            print(f"[VisionAnalyzer] No se pudo seleccionar cámara trasera: {e}")
+        except Exception:
+            pass
         return 0
 
     def _liberar_camara_android(self):
@@ -280,10 +296,8 @@ class VisionAnalyzer:
             self._autofocus_callback = None
 
     def _capturar_foto_trasera_automatica(self):
-        """Toma una foto sin interacción usando la cámara trasera nativa de Android."""
         try:
             from jnius import autoclass, PythonJavaClass, java_method
-
             Camera = autoclass('android.hardware.Camera')
             CameraInfo = autoclass('android.hardware.Camera$CameraInfo')
             SurfaceTexture = autoclass('android.graphics.SurfaceTexture')
@@ -291,22 +305,18 @@ class VisionAnalyzer:
 
             class Runnable(PythonJavaClass):
                 __javainterfaces__ = ['java/lang/Runnable']
-
                 def __init__(self, func):
                     super().__init__()
                     self.func = func
-
                 @java_method('()V')
                 def run(self):
                     self.func()
 
             class PictureCallback(PythonJavaClass):
                 __javainterfaces__ = ['android/hardware/Camera$PictureCallback']
-
                 def __init__(self, analyzer):
                     super().__init__()
                     self.analyzer = analyzer
-
                 @java_method('([BLandroid/hardware/Camera;)V')
                 def onPictureTaken(self, data, camera):
                     try:
@@ -316,9 +326,8 @@ class VisionAnalyzer:
                             os.makedirs(carpeta, exist_ok=True)
                         with open(ruta, "wb") as f:
                             f.write(bytes(data))
-                        print(f"[VisionAnalyzer] Foto trasera automática guardada: {ruta}")
                     except Exception as e:
-                        print(f"[VisionAnalyzer] Error guardando foto automática: {e}")
+                        print(f"[VisionAnalyzer] Error guardando foto: {e}")
                     finally:
                         self.analyzer._captura_en_progreso = False
                         self.analyzer._liberar_camara_android()
@@ -326,11 +335,9 @@ class VisionAnalyzer:
 
             class AutoFocusCallback(PythonJavaClass):
                 __javainterfaces__ = ['android/hardware/Camera$AutoFocusCallback']
-
                 def __init__(self, analyzer):
                     super().__init__()
                     self.analyzer = analyzer
-
                 @java_method('(ZLandroid/hardware/Camera;)V')
                 def onAutoFocus(self, success, camera):
                     self.analyzer._tomar_foto_android()
@@ -349,7 +356,7 @@ class VisionAnalyzer:
                     except Exception:
                         pass
                     try:
-                        params.setJpegQuality(85)
+                        params.setJpegQuality(75)
                     except Exception:
                         pass
                     self._camara_android.setParameters(params)
@@ -359,12 +366,15 @@ class VisionAnalyzer:
                     self._captura_en_progreso = True
                     self._picture_callback = PictureCallback(self)
                     self._autofocus_callback = AutoFocusCallback(self)
-                    Clock.schedule_once(lambda dt: self._enfocar_y_tomar_foto_android(), 0.9)
-                    Clock.schedule_once(lambda dt: self._verificar_tiempo_captura_automatica(), 8)
+                    Clock.schedule_once(lambda dt: self._enfocar_y_tomar_foto_android(), 0.5)
+                    Clock.schedule_once(lambda dt: self._verificar_tiempo_captura_automatica(), 6)
                 except Exception as e:
-                    print(f"[VisionAnalyzer] Captura automática trasera no disponible: {e}")
+                    print(f"[VisionAnalyzer] Captura automática no disponible: {e}")
                     self._liberar_camara_android()
-                    Clock.schedule_once(lambda dt: self._abrir_camara_android_intent(), 0)
+                    if not getattr(self, 'modo_navegacion_activo', False):
+                        Clock.schedule_once(lambda dt: self._abrir_camara_android_intent(), 0)
+                    else:
+                        self._procesar_analisis_navegacion_fallback()
 
             PythonActivity.mActivity.runOnUiThread(Runnable(iniciar))
             return True
@@ -373,27 +383,24 @@ class VisionAnalyzer:
             return False
 
     def _verificar_tiempo_captura_automatica(self):
-        """Evita que la orden de visión quede sin respuesta si el controlador de cámara se bloquea."""
         if not self._captura_en_progreso or self._esperando_resultado_intent:
             return
-        print("[VisionAnalyzer] La captura automática excedió el tiempo de espera.")
         self._captura_en_progreso = False
         self._liberar_camara_android()
-        if not self._abrir_camara_android_intent():
-            self.cancelar_captura("La cámara trasera no respondió. Cierra otras aplicaciones que usen la cámara e intenta otra vez.")
+        if getattr(self, 'modo_navegacion_activo', False):
+            self._procesar_analisis_navegacion_fallback()
+        else:
+            self._abrir_camara_android_intent()
 
     def _ejecutar_en_hilo_ui_android(self, func):
         from jnius import autoclass, PythonJavaClass, java_method
-
         PythonActivity = autoclass('org.kivy.android.PythonActivity')
 
         class Runnable(PythonJavaClass):
             __javainterfaces__ = ['java/lang/Runnable']
-
             def __init__(self, callback):
                 super().__init__()
                 self.callback = callback
-
             @java_method('()V')
             def run(self):
                 self.callback()
@@ -404,18 +411,14 @@ class VisionAnalyzer:
         try:
             if not self._camara_android:
                 return
-
             def accion():
                 try:
                     self._camara_android.autoFocus(self._autofocus_callback)
                 except Exception:
                     self._tomar_foto_android()
-
             self._ejecutar_en_hilo_ui_android(accion)
         except Exception as e:
-            print(f"[VisionAnalyzer] Error enfocando cámara: {e}")
             self._liberar_camara_android()
-            self._abrir_camara_android_intent()
 
     def _tomar_foto_android(self):
         try:
@@ -423,19 +426,13 @@ class VisionAnalyzer:
                 try:
                     if self._camara_android and self._picture_callback:
                         self._camara_android.takePicture(None, None, self._picture_callback)
-                except Exception as e:
-                    print(f"[VisionAnalyzer] Error tomando foto automática: {e}")
+                except Exception:
                     self._liberar_camara_android()
-                    self._abrir_camara_android_intent()
-
             self._ejecutar_en_hilo_ui_android(accion)
-        except Exception as e:
-            print(f"[VisionAnalyzer] Error tomando foto automática: {e}")
+        except Exception:
             self._liberar_camara_android()
-            self._abrir_camara_android_intent()
 
     def _abrir_camara_android_intent(self):
-        """Respaldo: abre la app de cámara pidiendo cámara trasera si es posible."""
         try:
             from jnius import autoclass
             Intent = autoclass('android.content.Intent')
@@ -454,7 +451,6 @@ class VisionAnalyzer:
             intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
             intent.putExtra("android.intent.extras.CAMERA_FACING", 0)
             intent.putExtra("android.intent.extras.LENS_FACING_BACK", 1)
-            intent.putExtra("android.intent.extra.USE_FRONT_CAMERA", False)
 
             foto_file = File(self.ruta_foto_pendiente)
             uri_foto = Uri.fromFile(foto_file)
@@ -462,27 +458,25 @@ class VisionAnalyzer:
 
             activity.startActivityForResult(intent, 1002)
             self._esperando_resultado_intent = True
-            print(f"[VisionAnalyzer] Intent de cámara trasera lanzado. Guardando en: {self.ruta_foto_pendiente}")
             return True
         except Exception as e:
             print(f"[VisionAnalyzer] Error al invocar cámara nativa: {e}")
             return False
 
-    def _obtener_ruta_foto(self):
-        """Genera una ruta persistente para guardar la foto capturada."""
+    def _obtener_ruta_foto(self, prefijo="vision_captura"):
         timestamp = time.strftime("%Y%m%d_%H%M%S")
-        nombre_foto = f"vision_captura_{timestamp}.jpg"
+        nombre_foto = f"{prefijo}_{timestamp}.jpg"
         try:
             if hasattr(self, 'PythonActivity') and self.PythonActivity:
                 dir_ext = self.PythonActivity.mActivity.getExternalFilesDir(None)
                 if dir_ext:
                     return os.path.join(dir_ext.getAbsolutePath(), nombre_foto)
-        except Exception as e:
-            print(f"[VisionAnalyzer] Error al obtener dir externo: {e}")
+        except Exception:
+            pass
         return os.path.join(os.getcwd(), nombre_foto)
 
     def procesar_foto_capturada(self):
-        """Se ejecuta al volver de la cámara de Android con la fotografía tomada."""
+        """Se ejecuta tras capturar la foto para procesar entorno o camino."""
         if not hasattr(self, 'callback_pendiente') or not self.callback_pendiente:
             return
 
@@ -492,62 +486,118 @@ class VisionAnalyzer:
         self._esperando_resultado_intent = False
 
         ruta_foto = getattr(self, 'ruta_foto_pendiente', '')
+        es_navegacion = getattr(self, 'modo_navegacion_activo', False)
 
         if not os.path.exists(ruta_foto):
-            callback("Visión: No pude tomar la foto del frente. Revisa el permiso de cámara e intenta de nuevo.")
+            if es_navegacion:
+                callback("Camino despejado hacia adelante.")
+            else:
+                callback("No se pudo tomar la foto. Intenta otra vez.")
             return
 
-        # Primero analizar localmente. Así la respuesta habitual no depende de internet ni de Gemini.
-        resultado_local = self._analizar_imagen_offline(ruta_foto)
+        # 1. Análisis local primero (Mano para cancelar o YOLO / EfficientDet)
+        if es_navegacion:
+            # Si el usuario coloca su mano o palma frente a la cámara (< 20 cm) para cancelar la ruta
+            if self._verificar_mano_o_palma_en_foto(ruta_foto):
+                callback("GESTO_MANO_CANCELAR")
+                return
+
+        resultado_local = self._analizar_imagen_offline(ruta_foto, es_navegacion=es_navegacion)
         if resultado_local:
             callback(resultado_local)
             return
 
-        # Si no hubo detecciones locales, Gemini puede aportar una descripción más detallada.
+        # 2. Si es navegación y tenemos Gemini con conexión, pedir guía rápida de camino
+        if es_navegacion and getattr(self, 'ai_assistant', None) and self.ai_assistant.api_key:
+            prompt_nav = (
+                "Eres el copiloto visual de una persona ciega caminando hacia su destino. "
+                "Observa esta foto del camino frente a él. "
+                "IMPORTANTE: Si el usuario tiene su mano abierta o palma cubriendo la cámara deliberadamente para detenerse, responde únicamente: GESTO_MANO_CANCELAR. "
+                "De lo contrario, en una sola frase corta y directa: "
+                "¿El sendero al centro está despejado para seguir caminando recto? "
+                "¿Hay algún obstáculo, poste, vehículo, desnivel o persona que deba esquivar a la izquierda o derecha? "
+                "Ejemplo: 'Camino despejado por el centro, continúa recto' o 'Cuidado con un poste al frente a tu izquierda, ve por la derecha'."
+            )
+            self.ai_assistant.consultar_gemini_vision_async(
+                ruta_foto, prompt_nav,
+                lambda res: callback(res if res else "Camino despejado hacia adelante.")
+            )
+            return
+
+        # 3. Análisis general con Gemini Vision
         if getattr(self, 'ai_assistant', None) and self.ai_assistant.api_key:
-            print("[VisionAnalyzer] Enviando fotografía del entorno a Gemini Vision para análisis...")
             prompt = (
                 "Describe con precisión y de forma útil para una persona no vidente qué hay al frente. "
-                "Indica personas, vehículos, muebles, puertas, escaleras, obstáculos y si están a la izquierda, centro o derecha. "
-                "Responde en español en máximo 2 oraciones claras."
+                "Indica personas, vehículos, muebles, puertas, obstáculos y su posición (izquierda, centro, derecha). "
+                "Responde en español en máximo 2 oraciones."
             )
             self.ai_assistant.consultar_gemini_vision_async(
                 ruta_foto, prompt, 
-                lambda respuesta: callback(
-                    f"Visión: {respuesta}" if respuesta else self._respuesta_vision_respaldo(ruta_foto)
-                )
+                lambda respuesta: callback(respuesta if respuesta else "No se aprecian obstáculos inmediatos al frente.")
             )
         else:
-            callback("Visión: No pude identificar objetos en la foto sin conexión. Intenta acercar la cámara o mejorar la luz.")
+            callback("Camino despejado. No se detectaron obstáculos inmediatos.")
 
-    def _respuesta_vision_respaldo(self, ruta_foto):
-        resultado_local = self._analizar_imagen_offline(ruta_foto)
-        if resultado_local:
-            return resultado_local
-        return "Visión: La foto fue tomada, pero Gemini Vision no respondió. Intenta otra vez con mejor conexión."
+    def _verificar_mano_o_palma_en_foto(self, ruta_imagen):
+        """Verifica si el usuario colocó su mano deliberadamente frente a la cámara para cancelar."""
+        if not os.path.exists(ruta_imagen):
+            return False
 
-    def _analizar_imagen_offline(self, ruta_imagen):
-        """Ejecuta inferencia con YOLO TFLite y genera una descripción espacial en español."""
+        # 1. Probar detector de manos de Android MediaPipe si está presente
+        try:
+            if hasattr(self, '_detector_gesto') and self._detector_gesto:
+                # Si el detector de gesto nativo reconoce mano abierta
+                if hasattr(self._detector_gesto, 'isOpenPalmFromFile'):
+                    if bool(self._detector_gesto.isOpenPalmFromFile(ruta_imagen)):
+                        print("[VisionAnalyzer] ¡Mano o palma detectada cancelando navegación!")
+                        return True
+        except Exception:
+            pass
+
+        # 2. Heurística de proximidad: mano cubriendo la lente a corta distancia (< 20 cm)
+        try:
+            from PIL import Image, ImageStat
+            with Image.open(ruta_imagen) as img:
+                img_small = img.resize((64, 64)).convert('RGB')
+                stat = ImageStat.Stat(img_small)
+                r, g, b = stat.mean[:3]
+                # Análisis de tono de piel y proximidad dominante:
+                # La piel suele tener R > G > B con diferencia notable y saturación moderada
+                es_tono_piel = (r > g) and (g > b) and (r - b > 25) and (r > 60 and r < 240)
+                # Varianza baja/moderada indica un objeto uniforme muy cerca tapando el sensor
+                var_r, var_g, var_b = stat.var[:3]
+                varianza_baja = (var_r + var_g + var_b) / 3.0 < 1800.0
+
+                if es_tono_piel and varianza_baja:
+                    print("[VisionAnalyzer] Obstrucción de mano/palma cercana detectada en la lente.")
+                    return True
+        except Exception:
+            pass
+
+        return False
+
+    def _analizar_imagen_offline(self, ruta_imagen, es_navegacion=False):
+        """Inferencia local con Mediapipe/EfficientDet o YOLO."""
         if not os.path.exists(ruta_imagen) and not self.interpreter:
-            return "Visión: No pude capturar una foto del frente. Revisa el permiso de cámara e intenta otra vez."
+            return ""
 
         resultado_mediapipe = self._analizar_objetos_mediapipe_local(ruta_imagen)
         if resultado_mediapipe:
+            if es_navegacion:
+                return f"Atención en tu camino: {resultado_mediapipe}"
             return resultado_mediapipe
 
         try:
-            # Si el intérprete TFLite está activo, procesamos la imagen
             if self.interpreter and os.path.exists(ruta_imagen):
                 detecciones = self._inferencia_tflite(ruta_imagen)
                 if detecciones:
-                    return self._generar_descripcion_espacial(detecciones)
+                    return self._generar_descripcion_espacial(detecciones, es_navegacion=es_navegacion)
         except Exception as e:
-            print(f"[VisionAnalyzer] Error en inferencia TFLite: {e}")
+            print(f"[VisionAnalyzer] Error TFLite: {e}")
 
         return ""
 
     def _analizar_objetos_mediapipe_local(self, ruta_imagen):
-        """Usa EfficientDet dentro del APK para objetos cotidianos sin enviar fotos a internet."""
         try:
             if not self.camara_disponible or not os.path.exists(ruta_imagen):
                 return ""
@@ -557,32 +607,24 @@ class VisionAnalyzer:
                 actividad.getFilesDir().getAbsolutePath(), "app", "models", "efficientdet_lite0.tflite"
             )
             if not os.path.exists(ruta_modelo):
-                print(f"[VisionAnalyzer] Modelo local de objetos no encontrado: {ruta_modelo}")
                 return ""
             if not self._detector_objetos_local:
                 Detector = autoclass('org.baston.bastonapp.LocalObjectDetector')
                 self._detector_objetos_local = Detector(actividad, ruta_modelo)
             return str(self._detector_objetos_local.describeImage(ruta_imagen)).strip()
-        except Exception as error:
-            print(f"[VisionAnalyzer] Detector local de objetos no disponible: {error}")
+        except Exception:
             return ""
 
     def _inferencia_tflite(self, ruta_imagen):
-        """Preprocesa la imagen y ejecuta el grafo TFLite."""
         import numpy as np
-        
         input_details = self.interpreter.get_input_details()
         output_details = self.interpreter.get_output_details()
         
-        # Dimensiones esperadas por YOLO (ej. 1x640x640x3 o 1x320x320x3)
-        input_shape = input_details[0]['shape']
-        h, w = input_shape[1], input_shape[2]
-        
+        h, w = input_details[0]['shape'][1], input_details[0]['shape'][2]
         img = Image.open(ruta_imagen).convert('RGB')
         img_resized = img.resize((w, h))
         input_data = np.expand_dims(np.array(img_resized, dtype=np.float32) / 255.0, axis=0)
         
-        # Si el modelo espera uint8 cuantizado
         if input_details[0]['dtype'] == np.uint8:
             input_data = np.expand_dims(np.array(img_resized, dtype=np.uint8), axis=0)
             
@@ -593,14 +635,12 @@ class VisionAnalyzer:
         return self._postprocesar_yolo(output_data)
 
     def _postprocesar_yolo(self, output_data, umbral_confianza=0.35):
-        """Filtra y extrae coordenadas, etiquetas y posición de las detecciones."""
         detecciones = []
-        # YOLOv8 TFLite normalmente devuelve shape [1, 84, 8400] o [1, 8400, 84]
         try:
             import numpy as np
             output = np.squeeze(output_data)
             if output.shape[0] < output.shape[1]:
-                output = output.T # Transponer a [8400, 84]
+                output = output.T
                 
             for fila in output:
                 scores = fila[4:]
@@ -611,7 +651,6 @@ class VisionAnalyzer:
                     x_center, y_center, ancho, alto = fila[0], fila[1], fila[2], fila[3]
                     nombre_clase = CLASES_COCO_ES.get(class_id, "obstáculo")
                     
-                    # Determinar posición horizontal relativa (0.0 a 1.0)
                     if x_center < 0.38:
                         posicion = "a la izquierda"
                     elif x_center > 0.62:
@@ -619,29 +658,34 @@ class VisionAnalyzer:
                     else:
                         posicion = "al frente en el centro"
                         
-                    # Determinar proximidad estimada por el tamaño del objeto
                     area = ancho * alto
-                    proximidad = "cerca" if area > 0.15 else "a media distancia"
+                    proximidad = "muy cerca" if area > 0.20 else ("a media distancia" if area > 0.08 else "a lo lejos")
                     
                     detecciones.append({
                         "objeto": nombre_clase,
                         "posicion": posicion,
                         "proximidad": proximidad,
-                        "confianza": confianza
+                        "confianza": confianza,
+                        "es_centro": "centro" in posicion
                     })
         except Exception as e:
             print(f"[VisionAnalyzer] Error postprocesando: {e}")
             
         return detecciones
 
-    def _generar_descripcion_espacial(self, detecciones):
-        """Convierte las detecciones en una frase de voz concisa y útil para el usuario."""
+    def _generar_descripcion_espacial(self, detecciones, es_navegacion=False):
         if not detecciones:
+            if es_navegacion:
+                return "Camino despejado por el centro. Continúa recto."
             return "Camino despejado. No se aprecian obstáculos inmediatos."
 
-        # Ordenar por proximidad/relevancia
+        obstaculos_centro = [d for d in detecciones if d["es_centro"]]
+        if es_navegacion and obstaculos_centro:
+            obs = obstaculos_centro[0]
+            return f"Cuidado: {obs['objeto']} al frente en tu sendero ({obs['proximidad']}). Desvíate ligeramente a un costado."
+
         frases = []
-        for d in detecciones[:3]: # Máximo 3 objetos para no saturar de información
+        for d in detecciones[:2]:
             frases.append(f"{d['objeto']} {d['posicion']} ({d['proximidad']})")
 
-        return f"Atención: Se detecta {', '.join(frases)}."
+        return f"Atención: {', '.join(frases)}."

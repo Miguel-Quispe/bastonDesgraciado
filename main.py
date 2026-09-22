@@ -21,12 +21,11 @@ from modules.location_service import LocationService
 from modules.vision_analyzer import VisionAnalyzer
 from modules.agenda_manager import AgendaManager
 from modules.document_reader import DocumentReader
-from modules.ai_assistant import AIAssistant
+from modules.ai_assistant import AIAssistant, obtener_nivel_bateria
 
 class BastonApp(App):
     def build(self):
         self.title = "Bastón Inteligente - Asistente Autónomo"
-        # Ajuste visual para accesibilidad de alto contraste
         Window.clearcolor = (0.05, 0.08, 0.12, 1)
         Window.softinput_mode = 'pan'
 
@@ -37,9 +36,16 @@ class BastonApp(App):
         self.agenda = AgendaManager()
         self.lector = DocumentReader()
         self.ai = AIAssistant()
+        
         self.evento_navegacion = None
+        self._analizando_camino = False
+        self._ultima_frase_guia = ""
         self._wake_lock = None
         self._camara_en_uso_por_comando = False
+        self._ultimo_toque_tiempo = 0
+
+        # Vincular toque en cualquier parte de la pantalla para accesibilidad (cancelar ruta con toque)
+        Window.bind(on_touch_down=self.al_tocar_pantalla)
 
         self.layout = BoxLayout(
             orientation='vertical',
@@ -131,7 +137,7 @@ class BastonApp(App):
 
         # ── Botón principal indicador de escucha continua ─────────────────────
         self.btn_accion = Button(
-            text="ESCUCHA CONTINUA ACTIVA\nHabla libremente",
+            text="ESCUCHA ACTIVA\nHabla libremente",
             font_size='19sp',
             bold=True,
             size_hint=(1, None),
@@ -148,10 +154,44 @@ class BastonApp(App):
 
         return self.layout
 
+    def al_tocar_pantalla(self, window, touch):
+        """
+        Accesibilidad táctil: Si la navegación está activa, un toque deliberado
+        en cualquier parte de la pantalla cancela inmediatamente la ruta.
+        """
+        if self.gps.navegacion_activa:
+            ahora = time.time()
+            if ahora - self._ultimo_toque_tiempo > 0.5:
+                self._ultimo_toque_tiempo = ahora
+                self.cancelar_navegacion_activa("por toque en pantalla")
+                return True
+        return False
+
+    def cancelar_navegacion_activa(self, motivo=""):
+        """Detiene la guía peatonal y devuelve la cámara al modo espera o gestos."""
+        if not self.gps.navegacion_activa and not self.evento_navegacion:
+            return
+
+        self.gps.cancelar_navegacion()
+        if self.evento_navegacion:
+            self.evento_navegacion.cancel()
+            self.evento_navegacion = None
+
+        self._camara_en_uso_por_comando = False
+        self._analizando_camino = False
+        self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
+        self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+        self.lbl_estado.text = "Navegación cancelada."
+
+        self.emitir_vibracion_bienvenida()
+        if "gesto" in motivo:
+            self.voz.hablar("Ruta cancelada por gesto de mano. Listo para nueva orden.")
+        else:
+            self.voz.hablar("Navegación y copiloto visual cancelados.")
+        self.programar_reinicio_control_por_gesto()
+
     def al_toggle_panel_api(self, instance):
-        """Muestra u oculta el panel de configuración de la clave API."""
         if self.panel_api.opacity == 0:
-            # Mostrar panel: cargar la clave actual si existe
             clave_actual = self.ai.api_key or ""
             self.input_api_key.text = clave_actual
             self.panel_api.height = dp(138)
@@ -159,14 +199,12 @@ class BastonApp(App):
             self.btn_config.text = "Cerrar Configuración"
             self.btn_config.background_color = (0.45, 0.1, 0.1, 1)
         else:
-            # Ocultar panel
             self.panel_api.height = 0
             self.panel_api.opacity = 0
             self.btn_config.text = "Configurar Clave API"
             self.btn_config.background_color = (0.18, 0.22, 0.30, 1)
 
     def al_guardar_api_key_ui(self, instance):
-        """Guarda la clave API escrita en el TextInput."""
         nueva_key = self.input_api_key.text.strip()
         if not nueva_key:
             self.lbl_estado.text = "Escribe la clave API antes de guardar."
@@ -183,7 +221,6 @@ class BastonApp(App):
             self.voz.hablar(detalle)
 
     def al_resultado_prueba_api(self, exito, mensaje):
-        """Informa si la clave guardada puede llamar realmente a Gemini."""
         if exito:
             self.lbl_estado.text = "Clave API de Gemini conectada correctamente."
             self.voz.hablar(mensaje)
@@ -192,8 +229,6 @@ class BastonApp(App):
         else:
             self.lbl_estado.text = f"Gemini no respondió: {mensaje}"
             self.voz.hablar(mensaje)
-
-
 
     def solicitar_permisos_android(self):
         try:
@@ -211,7 +246,6 @@ class BastonApp(App):
                 pass
             
             def callback_permisos(permissions, grants):
-                print(f"[BastonApp] Callback de permisos recibido: {grants}")
                 audio_concedido = True
                 camara_concedida = True
                 try:
@@ -225,23 +259,18 @@ class BastonApp(App):
                     pass
 
                 self.permiso_camara_concedido = camara_concedida
-                if not camara_concedida:
-                    print("[BastonApp] Permiso de cámara denegado.")
-
                 if not audio_concedido:
                     self.lbl_estado.text = "Permiso de micrófono denegado. Actívalo para usar comandos de voz."
-                    self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes para usar comandos de voz.")
+                    self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes.")
                     return
 
-                # La cámara trasera detecta una palma abierta localmente y recién entonces abre el micrófono.
                 Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
             request_permissions(permisos, callback_permisos)
         except Exception as e:
-            print(f"[BastonApp] Permisos nativos no aplicados: {e}")
+            print(f"[BastonApp] Permisos nativos: {e}")
 
     def emitir_vibracion_bienvenida(self):
-        """Emite una vibración háptica al abrir la app para confirmación táctil del usuario no vidente."""
         try:
             from jnius import autoclass
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
@@ -249,12 +278,11 @@ class BastonApp(App):
             activity = PythonActivity.mActivity
             vibrator = activity.getSystemService(Context.VIBRATOR_SERVICE)
             if vibrator:
-                vibrator.vibrate(300)
-        except Exception as e:
-            print(f"[BastonApp] Vibración no disponible: {e}")
+                vibrator.vibrate(250)
+        except Exception:
+            pass
 
     def on_start(self):
-        """Inicia los servicios automáticos y emite aviso táctil y auditivo para personas no videntes."""
         self.solicitar_permisos_android()
         self.emitir_vibracion_bienvenida()
         self.mantener_activa_con_pantalla_apagada()
@@ -262,22 +290,19 @@ class BastonApp(App):
         try:
             from android import activity
             activity.bind(on_activity_result=self.al_recibir_resultado_actividad)
-        except Exception as e:
-            print(f"[BastonApp] Fallback vinculo actividad: {e}")
+        except Exception:
+            pass
 
-        # Iniciar reconexión automática en segundo plano para el Bastón ESP32 (0 botones requeridos)
         try:
             self.bt.iniciar_auto_reconexion(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
         except Exception as e:
-            print(f"[BastonApp] Error iniciando auto-reconexión Bluetooth: {e}")
+            print(f"[BastonApp] Bluetooth auto-reconexion: {e}")
 
-        nombre_actual = self.voz.nombre_asistente.capitalize()
-        mensaje_bienvenida = f"Aplicación iniciada. Asistente activo. Te escucho."
-        
+        mensaje_bienvenida = "Soy Optimus Prime, tu copiloto visual. Control por gestos y voz activo. Muestra tu palma abierta o di tu orden."
         try:
             self.voz.hablar(mensaje_bienvenida)
-        except Exception as e:
-            print(f"[BastonApp] Error en bienvenida por voz: {e}")
+        except Exception:
+            pass
 
         if not self.voz.activity:
             try:
@@ -285,40 +310,35 @@ class BastonApp(App):
                     callback_comando=self.procesar_comando_texto,
                     callback_parcial=self.al_recibir_parcial
                 )
-            except Exception as e:
-                print(f"[BastonApp] Error iniciando escucha continua: {e}")
+            except Exception:
+                pass
 
     def iniciar_control_por_gesto(self):
-        if not self.voz.activity or self._camara_en_uso_por_comando:
+        if not self.voz.activity or self._camara_en_uso_por_comando or self.gps.navegacion_activa:
             return
         iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
         if iniciado:
             self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
         else:
-            self.lbl_estado.text = "No se pudo iniciar la cámara para gestos. Usa el botón para dar un comando."
+            self.lbl_estado.text = "Asistente listo. Presiona el botón o habla para ordenar."
 
     def activar_comando_por_gesto(self):
-        """La palma abierta habilita una única escucha, sin micrófono permanente."""
         self.lbl_estado.text = "Gesto detectado. Preparando micrófono..."
-        # Dar tiempo a Android para liberar físicamente la cámara antes de pedir AudioRecord.
         Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.45)
 
     def _abrir_comando_por_gesto(self):
         if self.voz.escuchar_una_vez(self.procesar_comando_texto, self.programar_reinicio_control_por_gesto):
             self.lbl_estado.text = "Micrófono activo. Di tu comando."
-            # La vibración sucede cuando la escucha ya fue solicitada, no cuando se detecta la palma.
             self.emitir_vibracion_bienvenida()
         else:
-            self.lbl_estado.text = "Micrófono ocupado. Vuelve a mostrar la palma abierta."
+            self.lbl_estado.text = "Micrófono ocupado. Vuelve a mostrar la palma."
             Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
     def programar_reinicio_control_por_gesto(self):
-        """Evita que detector de palma y captura de foto abran la cámara a la vez."""
-        # Primero dejamos que procesar_comando_texto inicie la acción solicitada.
         Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), 0.25)
 
     def _reanudar_control_por_gesto_si_libre(self):
-        if self._camara_en_uso_por_comando:
+        if self._camara_en_uso_por_comando or self.gps.navegacion_activa:
             return
         espera_voz = getattr(self.voz, '_bloqueo_eco_hasta', 0.0) - time.monotonic()
         if espera_voz > 0:
@@ -327,7 +347,6 @@ class BastonApp(App):
         self.iniciar_control_por_gesto()
 
     def mantener_activa_con_pantalla_apagada(self):
-        """Mantiene el procesador activo para voz y Bluetooth aunque se apague la pantalla."""
         try:
             from jnius import autoclass
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
@@ -338,12 +357,10 @@ class BastonApp(App):
             self._wake_lock = power_manager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BastonInteligente:Asistencia")
             self._wake_lock.setReferenceCounted(False)
             self._wake_lock.acquire()
-            print("[BastonApp] Bloqueo parcial de energía activo.")
-        except Exception as e:
-            print(f"[BastonApp] No se pudo mantener activa con pantalla apagada: {e}")
+        except Exception:
+            pass
 
     def al_recibir_resultado_actividad(self, request_code, result_code, intent_data):
-        """Recibe el resultado del micrófono nativo o de la cámara por Intent."""
         if request_code == 1001 and result_code == -1 and intent_data:
             try:
                 from jnius import autoclass
@@ -351,40 +368,38 @@ class BastonApp(App):
                 matches = intent_data.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)
                 if matches and matches.size() > 0:
                     texto = str(matches.get(0)).strip()
-                    print(f"[BastonApp Speech Intent Result]: {texto}")
                     self.lbl_estado.text = f"Escuchado: {texto}"
                     self.voz._procesar_texto_reconocido(texto, self.procesar_comando_texto)
             except Exception as e:
-                print(f"[BastonApp Error Intent Result]: {e}")
+                print(f"[BastonApp] Intent voz error: {e}")
 
         elif request_code == 1002 and result_code == -1:
-            print("[BastonApp Camera Result]: Foto de entorno tomada con éxito. Procesando visión...")
             self.lbl_estado.text = "Procesando foto del entorno..."
             Clock.schedule_once(lambda dt: self.vision.procesar_foto_capturada(), 0.5)
 
         elif request_code == 1003 and result_code == -1:
-            print("[BastonApp Camera Result]: Foto de documento tomada con éxito. Procesando lectura...")
             self.lbl_estado.text = "Procesando lectura del documento..."
             Clock.schedule_once(lambda dt: self.lector.procesar_foto_capturada(), 0.5)
 
         elif request_code == 1002:
-            self.vision.cancelar_captura("No pude abrir la cámara trasera. Activa el permiso de cámara en Ajustes y vuelve a intentar.")
+            self.vision.cancelar_captura("No pude abrir la cámara trasera.")
 
         elif request_code == 1003:
             self.lector.cancelar_captura("No pude abrir la cámara para leer el documento.")
 
     def al_presionar_boton_escucha(self, instance):
-        """Alternativa táctil: habilita una única escucha sin iniciar el modo continuo."""
+        if self.gps.navegacion_activa:
+            self.cancelar_navegacion_activa("por botón táctil")
+            return
+
         self.vision.detener_detector_gesto()
         self.activar_comando_por_gesto()
 
     def al_recibir_parcial(self, texto_parcial):
-        """Muestra texto en tiempo real conforme el usuario va hablando."""
         if texto_parcial:
             self.lbl_estado.text = f"Oyendo: {texto_parcial}..."
 
     def procesar_comando_texto(self, texto_comando):
-        """Procesa y responde buscando coincidencias flexibles de palabras clave."""
         if not texto_comando:
             return
 
@@ -392,7 +407,7 @@ class BastonApp(App):
         if not texto:
             return
 
-        print(f"[BastonApp - Procesando comando]: '{texto_comando}' (norm: '{texto}')")
+        print(f"[Comando]: '{texto_comando}' (norm: '{texto}')")
         self.lbl_estado.text = f"Comando: {texto_comando}"
         self.img_qr.opacity = 0
         self.img_qr.height = 0
@@ -400,11 +415,70 @@ class BastonApp(App):
         # NODO 0: Saludo y Activación por voz
         if any(w in texto for w in ["hola", "saludo", "buenas", "activado", "estas ahi", "ayuda", "quien eres"]):
             nombre_act = self.voz.nombre_asistente.capitalize()
-            self.voz.hablar(f"Hola, soy tu asistente {nombre_act}. Te escucho. Puedo ayudarte con la cámara, agenda, ubicación, documentos o guiado.")
+            self.voz.hablar(f"Hola, soy tu asistente {nombre_act}. Te escucho. Puedo ayudarte con la cámara, agenda, batería, ubicación, guiado de ruta o preguntas.")
             self.lbl_estado.text = "Asistente activo. Te escucho."
             return
 
-        # NODO 1: Cambiar Nombre de Activación
+        # NODO 1: Batería Actual (Respuesta inmediata precisa con nivel real)
+        if any(w in texto for w in ["bateria", "carga", "pila", "nivel de bateria", "bateria actual", "cuanta bateria", "que bateria"]):
+            estado_bat = obtener_nivel_bateria()
+            self.lbl_estado.text = estado_bat
+            self.voz.hablar(estado_bat)
+            return
+
+        # NODO 2: Cancelar Navegación Activa (por voz)
+        if any(w in texto for w in ["cancelar ruta", "detener guia", "parar ruta", "cancelar navegacion", "detener navegacion", "cancelar guia", "detener copiloto", "detener", "para", "cancela", "cancelar"]):
+            if self.gps.navegacion_activa:
+                self.cancelar_navegacion_activa("por orden de voz")
+                return
+
+        # NODO 3: Ajustes de la Voz del Asistente
+        if any(w in texto for w in ["mas lento", "habla mas lento", "despacio", "mas despacio"]):
+            self.voz.cambiar_velocidad(-0.15)
+            return
+
+        if any(w in texto for w in ["mas rapido", "habla mas rapido"]):
+            self.voz.cambiar_velocidad(+0.15)
+            return
+
+        if any(w in texto for w in ["cambiar voz", "otra voz", "voz masculina", "voz femenina", "voz grave", "voz aguda"]):
+            self.voz.cambiar_tono()
+            return
+
+        # NODO 4: Navegación y Guiado Peatonal Asistido con Visión
+        if any(w in texto for w in ["guiame", "guia", "llevame", "lleva", "ir a", "ir al", "ir a la", "como llego", "navegar", "buscar farmacia", "llegar a"]):
+            lugar = texto_comando
+            for prefijo in ["guiame a la", "guiame al", "guiame a", "guia a la", "guia a", "llevame a la", "llevame al", "llevame a", "lleva a", "ir a la", "ir al", "ir a", "como llego a la", "como llego al", "como llego a", "buscar", "navegar a", "llegar a una", "llegar a la", "llegar a"]:
+                pref_norm = normalizar_texto(prefijo)
+                if pref_norm in texto:
+                    idx = texto.find(pref_norm)
+                    if idx != -1:
+                        lugar = texto_comando[idx + len(pref_norm):].strip()
+                    break
+            
+            if not lugar:
+                lugar = "farmacia"
+
+            # Ceder la cámara al modo navegación asistida
+            self.vision.detener_detector_gesto()
+            self._camara_en_uso_por_comando = True
+
+            self.btn_accion.text = "NAVEGANDO...\nTOCA PARA CANCELAR"
+            self.btn_accion.background_color = (0.8, 0.2, 0.2, 1)
+
+            self.voz.hablar(f"Buscando {lugar} más cercana y calculando ruta segura...")
+            lat, lon = self.gps.obtener_coordenadas()
+            mensaje_guia = self.gps.buscar_y_establecer_destino(lugar, lat, lon)
+            self.lbl_estado.text = mensaje_guia
+            self.voz.hablar(mensaje_guia)
+
+            # Iniciar bucle de copiloto peatonal con cámara (cada 5.5 segundos)
+            if self.evento_navegacion:
+                self.evento_navegacion.cancel()
+            self.evento_navegacion = Clock.schedule_interval(self._monitorear_navegacion_con_camara, 5.5)
+            return
+
+        # NODO 5: Cambiar Nombre de Activación
         if any(w in texto for w in ["cambiar nombre", "cambiar palabra", "llamate", "tu nombre es", "nuevo nombre", "llamarte"]):
             nuevo_nombre = texto_comando
             for prefijo in ["cambiar nombre a", "cambiar palabra a", "llamate a", "llamate", "tu nombre es", "nuevo nombre", "llamarte"]:
@@ -422,20 +496,10 @@ class BastonApp(App):
                 self.voz.hablar(f"No entendí el nuevo nombre. Mi nombre actual es {self.voz.nombre_asistente.capitalize()}.")
             return
 
-        # NODO 2: Cancelar Navegación Activa
-        if any(w in texto for w in ["cancelar ruta", "detener guia", "parar ruta", "cancelar navegacion", "detener navegacion", "cancelar guia"]):
-            self.gps.cancelar_navegacion()
-            if self.evento_navegacion:
-                self.evento_navegacion.cancel()
-                self.evento_navegacion = None
-            self.lbl_estado.text = "Ruta cancelada."
-            self.voz.hablar("Ruta de navegación cancelada.")
-            return
-
-        # NODO 3: Agenda Personal (Evaluado antes de Visión para que 'ver agenda' no active la cámara)
+        # NODO 6: Agenda Personal
         if any(w in texto for w in ["borrar agenda", "limpiar agenda", "borrar recordatorios", "limpiar recordatorios", "vaciar agenda"]):
             resumen = self.agenda.borrar_agenda()
-            self.lbl_estado.text = f"Agenda: Limpiada"
+            self.lbl_estado.text = "Agenda: Limpiada"
             self.voz.hablar(resumen)
             return
 
@@ -464,7 +528,7 @@ class BastonApp(App):
             self.voz.hablar(resumen)
             return
 
-        # NODO 4: Lectura de Documentos, Hojas y Etiquetas
+        # NODO 7: Lectura de Documentos, Hojas y Etiquetas
         if any(w in texto for w in ["leer", "lee", "lectura", "documento", "hoja", "etiqueta", "texto", "papel", "carta", "pagina", "revisa"]):
             self.vision.detener_detector_gesto()
             self._camara_en_uso_por_comando = True
@@ -472,8 +536,8 @@ class BastonApp(App):
             self.lector.capturar_y_leer(self.al_completar_lectura_documento, ai_assistant=self.ai)
             return
 
-        # NODO 5: Ubicación GPS actual
-        if any(w in texto for w in ["ubicacion", "donde estoy", "donde me encuentro", "donde ando", "donde me ubico", "lugar", "donde", "direccion", "posicion"]) and not any(w in texto for w in ["guia", "llevame", "ir"]):
+        # NODO 8: Ubicación GPS actual
+        if any(w in texto for w in ["ubicacion", "donde estoy", "donde me encuentro", "donde ando", "donde me ubico", "lugar", "donde", "direccion", "posicion"]) and not any(w in texto for w in ["guia", "llevame", "ir", "como llego"]):
             self.voz.hablar("Obteniendo tu ubicación actual.")
             lat, lon = self.gps.obtener_coordenadas()
             if lat is not None:
@@ -485,44 +549,19 @@ class BastonApp(App):
                 self.lbl_estado.text = "Error: GPS no disponible"
             return
 
-        # NODO 6: Navegación y Guiado
-        if any(w in texto for w in ["guiame", "guia", "llevame", "lleva", "ir a", "ir al", "ir a la", "como llego", "navegar"]):
-            lugar = texto_comando
-            for prefijo in ["guiame a", "guia a", "llevame a", "lleva a", "ir a", "como llego a", "navegar a", "ir al", "ir a la", "guiame", "llevame"]:
-                pref_norm = normalizar_texto(prefijo)
-                if pref_norm in texto:
-                    idx = texto.find(pref_norm)
-                    if idx != -1:
-                        lugar = texto_comando[idx + len(pref_norm):].strip()
-                    break
-            
-            if not lugar:
-                lugar = "Farmacia Central"
-
-            self.voz.hablar(f"Calculando ruta hacia {lugar}...")
-            lat, lon = self.gps.obtener_coordenadas()
-            mensaje_guia = self.gps.buscar_y_establecer_destino(lugar, lat, lon)
-            self.lbl_estado.text = mensaje_guia
-            self.voz.hablar(mensaje_guia)
-
-            if not self.evento_navegacion:
-                self.evento_navegacion = Clock.schedule_interval(self._monitorear_navegacion, 12)
-            return
-
-        # NODO 7: Conexión Bastón ESP32 / Bluetooth (Dirección MAC: 30:C9:22:32:F5:D6)
+        # NODO 9: Conexión Bastón ESP32 / Bluetooth
         if any(w in texto for w in ["conectar baston", "conectar", "conectate", "desconectar", "enlazar baston", "enlazar", "vincular baston", "vincular", "bluetooth", "baston"]) and not any(w in texto for w in ["guia", "llevame", "ir", "hola", "agenda", "dime", "donde"]):
             if "desconectar" in texto:
                 self.bt.desconectar()
                 self.lbl_estado.text = "Bastón desconectado."
                 self.voz.hablar("Bastón desconectado.")
             else:
-                self.lbl_estado.text = "Estado: Conectando al Bastón ESP32 (30:C9:22:32:F5:D6)..."
+                self.lbl_estado.text = "Estado: Conectando al Bastón ESP32..."
                 self.voz.hablar("Buscando señal del bastón. Conectando...")
                 self.bt.conectar_async(self.al_completar_conexion_baston)
             return
 
-
-        # NODO 8: Código QR
+        # NODO 10: Código QR
         if any(w in texto for w in ["qr", "comparte", "compartir", "codigo"]):
             ruta_qr = self.generar_qr_compartir()
             self.lbl_estado.text = "Código QR generado"
@@ -534,12 +573,11 @@ class BastonApp(App):
             self.voz.hablar("Código QR generado en la pantalla para compartir la aplicación.")
             return
 
-        # NODO 9: Análisis Visual Puntual (Cámara / YOLO / Obstáculos / Frente)
+        # NODO 11: Análisis Visual Puntual (¿Qué tengo al frente?)
         if any(w in texto for w in [
             "frente", "al frente", "alfrente", "delante", "adelante", "enfrente", "que hay", "que veo", "que ves", "que miras",
-            "que esta", "que tengo", "que hay al frente", "que tengo al frente", "que esta al frente", "que esta alfrente",
-            "mira", "mirar", "ver entorno", "ver camara", "ver foto", "camara", "foto", "fotografia",
-            "obstaculo", "obstaculos", "objeto", "objetos", "analizar", "escaneo", "escanea", "que tenemos"
+            "que esta", "que tengo", "que hay al frente", "que tengo al frente", "que esta al frente", "mira", "mirar",
+            "ver entorno", "ver camara", "ver foto", "camara", "foto", "obstaculo", "obstaculos", "objeto", "analizar"
         ]):
             self.vision.detener_detector_gesto()
             self._camara_en_uso_por_comando = True
@@ -548,14 +586,13 @@ class BastonApp(App):
             self.vision.capturar_y_analizar(self.al_completar_analisis_vision, ai_assistant=self.ai)
             return
 
-        # NODO 10: Configurar / Guardar Clave API de Gemini por Voz o Teclado
+        # NODO 12: Configuración de Clave API
         quiere_guardar_api = any(w in texto for w in ["guardar clave", "guardar api key", "guardar clave api"])
-
         if not quiere_guardar_api and any(w in texto for w in ["configurar clave", "configurar api", "clave api", "api gemini"]):
             if self.ai.tiene_api_key_configurada():
                 self.voz.hablar("La clave API de Gemini ya está configurada.")
             else:
-                self.voz.hablar("Abriendo configuración. Pega una clave API válida de Google AI Studio.")
+                self.voz.hablar("Abriendo configuración. Pega una clave API de Google AI Studio.")
             if self.panel_api.opacity == 0:
                 self.al_toggle_panel_api(None)
             return
@@ -572,52 +609,86 @@ class BastonApp(App):
             if nueva_key:
                 exito = self.ai.guardar_api_key(nueva_key)
                 if exito:
-                    self.lbl_estado.text = "Clave guardada. Probando conexión con Gemini..."
+                    self.lbl_estado.text = "Clave guardada. Probando conexión..."
                     self.voz.hablar("Clave guardada. Probando conexión con Gemini.")
                     self.ai.probar_conexion_gemini_async(self.al_resultado_prueba_api)
                 else:
-                    detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API de Gemini válida."
-                    self.lbl_estado.text = f"Error al guardar API Key. {detalle}"
+                    detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API válida."
+                    self.lbl_estado.text = f"Error al guardar. {detalle}"
                     self.voz.hablar(detalle)
-            else:
-                self.voz.hablar("No detecté la clave API. Es mejor pegarla desde el panel de configuración para evitar errores al dictarla.")
             return
 
-        # NODO 11: Consultas Locales Offline (Hora, Fecha, Identidad, Estado)
+        # NODO 13: Consultas Locales Offline (Hora, Fecha exacta, Ayuda)
         res_local = self.ai.responder_consulta_local(texto, texto_comando)
         if res_local:
             self.lbl_estado.text = res_local
             self.voz.hablar(res_local)
             return
 
-        # NODO 12: IA Conversacional Gemini (Preguntas Libres del Usuario)
+        # NODO 14: IA Conversacional Gemini (Preguntas Libres y Fiestas con fecha real)
         self.lbl_estado.text = f"Consultando IA: {texto_comando}"
         self.voz.hablar("Pensando...")
         self.ai.consultar_gemini_async(texto_comando, self.al_recibir_respuesta_gemini)
 
     def al_recibir_respuesta_gemini(self, respuesta):
-        """Recibe la respuesta generada por Gemini y la reproduce por voz."""
         self.lbl_estado.text = f"IA: {respuesta}"
         self.voz.hablar(respuesta)
 
-
-
-
-    def _monitorear_navegacion(self, dt):
-        """Monitorea el avance del usuario hacia el destino y emite avisos por voz."""
+    def _monitorear_navegacion_con_camara(self, dt):
         if not self.gps.navegacion_activa:
             if self.evento_navegacion:
                 self.evento_navegacion.cancel()
                 self.evento_navegacion = None
+            self._camara_en_uso_por_comando = False
+            self.programar_reinicio_control_por_gesto()
             return
 
         lat, lon = self.gps.obtener_coordenadas()
-        instruccion = self.gps.obtener_instruccion_guia(lat, lon)
-        if instruccion:
-            self.lbl_estado.text = f"Navegación:\n{instruccion}"
-            self.voz.hablar(instruccion)
+        instruccion_gps = self.gps.obtener_instruccion_guia(lat, lon)
+
+        if not self.gps.navegacion_activa:
+            # Llegó a destino
+            if self.evento_navegacion:
+                self.evento_navegacion.cancel()
+                self.evento_navegacion = None
+            self._camara_en_uso_por_comando = False
+            self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
+            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+            self.lbl_estado.text = instruccion_gps
+            self.voz.hablar(instruccion_gps)
+            self.programar_reinicio_control_por_gesto()
+            return
+
+        if self._analizando_camino:
+            return
+
+        self._analizando_camino = True
+
+        def al_recibir_analisis_camino(info_camino):
+            self._analizando_camino = False
+
+            # Gesto de mano / palma frente a la cámara para cancelar navegación sin tocar la pantalla
+            if info_camino and "GESTO_MANO_CANCELAR" in str(info_camino):
+                print("[BastonApp] Navegación cancelada por gesto de mano frente a la cámara.")
+                self.cancelar_navegacion_activa("por gesto de mano")
+                return
+
+            frase_combinada = f"{instruccion_gps}. {info_camino}".strip()
+
+            if frase_combinada != self._ultima_frase_guia:
+                self._ultima_frase_guia = frase_combinada
+                self.lbl_estado.text = f"Guía:\n{frase_combinada}"
+                self.voz.hablar(frase_combinada)
+
+        self.vision.analizar_camino_en_navegacion(al_recibir_analisis_camino, ai_assistant=self.ai)
 
     def al_recibir_alerta_baston(self, mensaje_alerta):
+        # Si el bastón físico envía orden de cancelar navegación
+        if any(w in mensaje_alerta.upper() for w in ["CANCELAR", "BOTON_CANCELAR", "DETENER"]):
+            if self.gps.navegacion_activa:
+                self.cancelar_navegacion_activa("por botón del bastón")
+                return
+
         Clock.schedule_once(lambda dt: self._actualizar_ui_alerta(mensaje_alerta), 0)
 
     def al_cambio_estado_baston(self, mensaje_estado):
@@ -631,7 +702,7 @@ class BastonApp(App):
     def al_completar_conexion_baston(self, exito):
         def actualizar_ui(dt):
             if exito:
-                self.lbl_estado.text = "Estado: Conectado al Bastón ESP32 (30:C9:22:32:F5:D6)"
+                self.lbl_estado.text = "Estado: Conectado al Bastón ESP32"
                 self.voz.hablar("Conectado.")
                 self.bt.escuchar_alertas_baston(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
             else:
@@ -639,7 +710,6 @@ class BastonApp(App):
                 self.lbl_estado.text = detalle
                 self.voz.hablar(detalle)
         Clock.schedule_once(actualizar_ui, 0)
-
 
     def _actualizar_ui_alerta(self, mensaje_alerta):
         self.lbl_estado.text = f"¡ALERTA!: {mensaje_alerta}"
@@ -667,7 +737,6 @@ class BastonApp(App):
         return ruta_salida
 
     def on_stop(self):
-        """Cierre limpio de conexiones y servicios."""
         if self.evento_navegacion:
             self.evento_navegacion.cancel()
         if hasattr(self, 'voz'):
@@ -680,8 +749,8 @@ class BastonApp(App):
             try:
                 if self._wake_lock.isHeld():
                     self._wake_lock.release()
-            except Exception as e:
-                print(f"[BastonApp] Error liberando bloqueo de energía: {e}")
+            except Exception:
+                pass
 
 if __name__ == '__main__':
     BastonApp().run()

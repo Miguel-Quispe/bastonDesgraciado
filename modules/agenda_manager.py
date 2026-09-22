@@ -4,7 +4,6 @@ import os
 import re
 import unicodedata
 
-
 class AgendaManager:
     MESES = {
         "enero": 1, "febrero": 2, "marzo": 3, "abril": 4, "mayo": 5, "junio": 6,
@@ -18,7 +17,6 @@ class AgendaManager:
         self._eliminar_vencidos()
 
     def _obtener_ruta_persistente(self, nombre_archivo):
-        """En Android guarda la agenda en la memoria privada, no dentro del APK."""
         if os.path.isabs(nombre_archivo):
             return nombre_archivo
         try:
@@ -54,7 +52,6 @@ class AgendaManager:
             print(f"[AgendaManager] Error al guardar agenda: {error}")
 
     def _eliminar_vencidos(self):
-        """Borra solo recordatorios cuya fecha límite terminó antes de hoy."""
         hoy = datetime.date.today()
         activos = []
         for evento in self.eventos:
@@ -74,7 +71,6 @@ class AgendaManager:
         return f"{fecha.day} de {meses[fecha.month - 1]} de {fecha.year}"
 
     def extraer_fecha_limite(self, texto):
-        """Lee 'hasta el 25 de septiembre', 'hasta mañana' o 'hasta 25/09/2026'."""
         texto_normalizado = self._sin_acentos(texto)
         indice = texto_normalizado.find("hasta")
         if indice < 0:
@@ -119,7 +115,6 @@ class AgendaManager:
         return None, descripcion
 
     def agregar_evento(self, descripcion_evento):
-        """Guarda una nota local con creación automática y fecha límite obligatoria."""
         fecha_limite, descripcion = self.extraer_fecha_limite(descripcion_evento)
         descripcion = descripcion.strip()
         if not descripcion:

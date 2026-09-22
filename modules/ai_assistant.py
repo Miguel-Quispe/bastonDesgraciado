@@ -1,6 +1,7 @@
-import os
-import json
 import datetime
+import json
+import os
+import re
 import urllib.request
 import urllib.parse
 import urllib.error
@@ -31,6 +32,47 @@ def _directorio_datos_app():
         pass
 
     return os.getcwd()
+
+def obtener_nivel_bateria():
+    """Obtiene el porcentaje real de batería y estado de carga en Android o PC."""
+    # 1. Intentar en Android vía PyJNIus
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        Intent = autoclass('android.content.Intent')
+        IntentFilter = autoclass('android.content.IntentFilter')
+        BatteryManager = autoclass('android.os.BatteryManager')
+        activity = PythonActivity.mActivity
+
+        filtro = IntentFilter(Intent.ACTION_BATTERY_CHANGED)
+        estado_bateria = activity.registerReceiver(None, filtro)
+
+        if estado_bateria:
+            nivel = estado_bateria.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+            escala = estado_bateria.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+            estado = estado_bateria.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+
+            if nivel >= 0 and escala > 0:
+                porcentaje = int((nivel / float(escala)) * 100)
+                cargando = estado in [BatteryManager.BATTERY_STATUS_CHARGING, BatteryManager.BATTERY_STATUS_FULL]
+                estado_str = "y está conectado al cargador" if cargando else "y no está cargando"
+                return f"Tu nivel de batería es del {porcentaje} por ciento {estado_str}."
+    except Exception as e:
+        print(f"[AIAssistant] Error consultando batería en Android: {e}")
+
+    # 2. Intentar en PC con psutil si está instalado
+    try:
+        import psutil
+        bateria = psutil.sensors_battery()
+        if bateria:
+            porcentaje = int(bateria.percent)
+            cargando = bateria.power_plugged
+            estado_str = "y conectado a la corriente" if cargando else "con la batería"
+            return f"Tu nivel de batería es del {porcentaje} por ciento {estado_str}."
+    except Exception:
+        pass
+
+    return "No se pudo obtener el porcentaje de batería en este dispositivo."
 
 class AIAssistant:
     def __init__(self):
@@ -257,7 +299,7 @@ class AIAssistant:
         return False, mensaje
 
     def responder_consulta_local(self, texto_normalizado, texto_original):
-        """Procesa preguntas comunes offline (hora, fecha, ayuda, identidad, sistema)."""
+        """Procesa preguntas comunes offline (hora, fecha, ayuda, identidad, estado de batería)."""
         texto = texto_normalizado
 
         # 1. Hora actual
@@ -268,21 +310,21 @@ class AIAssistant:
             return f"Son las {hora_str}."
 
         # 2. Fecha actual
-        if any(w in texto for w in ["fecha", "que dia es", "dia de hoy", "que fecha"]):
+        if any(w in texto for w in ["que dia es", "dia de hoy", "que fecha", "fecha de hoy"]) or ("fecha" in texto and not any(w in texto for w in ["festeja", "celebra", "ocurre"])):
             ahora = datetime.datetime.now()
             dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
             meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
             dia_nombre = dias[ahora.weekday()]
             mes_nombre = meses[ahora.month - 1]
-            return f"Hoy es {dia_nombre} {ahora.day} de {mes_nombre}."
+            return f"Hoy es {dia_nombre} {ahora.day} de {mes_nombre} del {ahora.year}."
 
-        # 3. Identidad y ayuda del asistente
+        # 3. Nivel de batería real
+        if any(w in texto for w in ["bateria", "carga", "pila", "porcentaje de bateria"]):
+            return obtener_nivel_bateria()
+
+        # 4. Identidad y ayuda del asistente
         if any(w in texto for w in ["quien eres", "quien sos", "como te llamas", "tu funcion", "que haces", "que puedes hacer"]):
             return "Soy Bastón Inteligente, tu asistente de autonomía. Puedo detectar obstáculos con la cámara, guiarte a lugares, leer documentos, gestionar tu agenda y responder preguntas por voz."
-
-        # 4. Estado de batería o sistema
-        if any(w in texto for w in ["bateria", "nivel de carga", "estado del sistema"]):
-            return "El asistente está activo y funcionando correctamente."
 
         return None
 
@@ -295,20 +337,26 @@ class AIAssistant:
         threading.Thread(target=_hilo_gemini, daemon=True).start()
 
     def _consultar_gemini_api(self, pregunta_texto):
-        """Realiza la petición HTTP REST a Gemini Flash con modelos de respaldo."""
+        """Realiza la petición HTTP REST a Gemini Flash con modelos de respaldo y contexto temporal real."""
         key = self.api_key or self._cargar_api_key()
         if not key:
             return "La clave API de Gemini no está configurada. Abre configurar clave API y pega una clave válida de Google AI Studio."
         if not self.es_api_key_gemini_valida(key):
             return "La clave guardada no parece ser de Gemini. Borra esa clave y pega una clave válida de Google AI Studio."
 
-        # Modelos actuales de Gemini. Se prueban en orden de rapidez y con respaldo.
-        modelos = ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]
-        
+        ahora = datetime.datetime.now()
+        dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+        meses = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"]
+        fecha_humana = f"{dias[ahora.weekday()]} {ahora.day} de {meses[ahora.month - 1]} de {ahora.year}"
+        hora_humana = ahora.strftime("%H:%M")
+
+        # Inyectar fecha y hora real para que Gemini nunca responda con fechas obsoletas como '4 de julio de 2024'
         prompt_sistema = (
-            "Eres el asistente de voz de un bastón inteligente para personas no videntes. "
-            "Responde a la siguiente consulta de forma muy breve, clara y amable en 1 o 2 oraciones sencillas en español. "
-            "No uses viñetas, asteriscos, símbolos de marcas ni emojis, ya que tu respuesta se reproducirá por voz.\n\n"
+            f"FECHA Y HORA ACTUALES EXACTAS DEL DISPOSITIVO: {fecha_humana}, {hora_humana}.\n"
+            "Eres el asistente de voz de un bastón inteligente para personas con discapacidad visual en Bolivia/Latinoamérica. "
+            "Responde a la siguiente consulta de forma concisa, veraz, clara y amable en 1 o máximo 2 oraciones sencillas en español. "
+            "Si te preguntan qué se celebra, qué se festeja o qué día es hoy, básate estrictamente en la fecha actual suministrada. "
+            "No uses asteriscos, viñetas, tablas, símbolos de marcado ni emojis, ya que tu respuesta se reproducirá directamente por voz del celular.\n\n"
             f"Pregunta del usuario: {pregunta_texto}"
         )
 
@@ -322,6 +370,9 @@ class AIAssistant:
             ]
         }
 
+        # Modelos actuales de Gemini. Se prueban en orden de rapidez y con respaldo.
+        modelos = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        
         for model in modelos:
             try:
                 txt_limpio = self._post_gemini(model, payload, timeout_segundos=9)
@@ -331,7 +382,7 @@ class AIAssistant:
                 self._registrar_error_gemini(model, e)
                 continue
 
-        return "No se pudo conectar con la IA de Gemini. Verifica que tu clave API de Google AI Studio sea válida y tengas conexión a internet."
+        return "No se pudo conectar con la IA de Gemini. Verifica tu conexión a internet o tu clave API."
 
     def consultar_gemini_vision_async(self, ruta_imagen, prompt_instruccion, callback_respuesta):
         """Analiza una fotografía utilizando la API de Gemini Vision en un hilo secundario."""
@@ -355,8 +406,9 @@ class AIAssistant:
                 b64_data = base64.b64encode(img_f.read()).decode("utf-8")
 
             prompt_sistema = (
-                "Eres el asistente de visión de un bastón inteligente para personas no videntes. "
-                "Responde de forma clara, directa y muy concisa en 1 o 2 oraciones sencillas en español. "
+                "Eres el asistente de visión de un bastón inteligente para personas con discapacidad visual. "
+                "Responde de forma clara, directa, útil y muy concisa en 1 o 2 oraciones sencillas en español. "
+                "Describe la posición de obstáculos (izquierda, centro, derecha) y si el camino es seguro para avanzar. "
                 "No uses viñetas, asteriscos, símbolos de marcado ni emojis, ya que tu respuesta se reproducirá por voz.\n\n"
                 f"Instrucción para esta imagen: {prompt_instruccion}"
             )
@@ -377,9 +429,9 @@ class AIAssistant:
                 ]
             }
 
-            for model in ["gemini-3.5-flash-lite", "gemini-3.8-flash", "gemini-3.5-flash"]:
+            for model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
                 try:
-                    txt_limpio = self._post_gemini(model, payload, timeout_segundos=12)
+                    txt_limpio = self._post_gemini(model, payload, timeout_segundos=10)
                     if txt_limpio:
                         return txt_limpio
                 except Exception as e:
