@@ -31,6 +31,15 @@ def _directorio_datos_app():
     except Exception:
         pass
 
+    try:
+        home = os.path.expanduser("~")
+        if home and os.path.isdir(home):
+            baston_dir = os.path.join(home, ".bastonapp")
+            os.makedirs(baston_dir, exist_ok=True)
+            return baston_dir
+    except Exception:
+        pass
+
     return os.getcwd()
 
 def obtener_nivel_bateria():
@@ -75,22 +84,86 @@ def obtener_nivel_bateria():
     return "No se pudo obtener el porcentaje de batería en este dispositivo."
 
 class AIAssistant:
-    def __init__(self):
+    def __init__(self, directorio_datos=None):
         self._config_nombre = "config_gemini.json"
+        self._directorio_personalizado = directorio_datos
         self.api_key_defecto = ""
         self.ultimo_error_config = ""
         self.api_key = self._cargar_api_key()
 
     @property
     def archivo_config(self):
+        if self._directorio_personalizado:
+            return os.path.join(self._directorio_personalizado, self._config_nombre)
         return os.path.join(_directorio_datos_app(), self._config_nombre)
 
     def _rutas_config_posibles(self):
-        rutas = [self.archivo_config]
+        rutas = []
+        if self._directorio_personalizado:
+            rutas.append(os.path.join(self._directorio_personalizado, self._config_nombre))
+
+        # Directorio principal seguro
+        rutas.append(self.archivo_config)
+
+        # Kivy App user_data_dir si está activa
+        try:
+            from kivy.app import App
+            app = App.get_running_app()
+            if app and hasattr(app, 'user_data_dir') and app.user_data_dir:
+                p = os.path.join(app.user_data_dir, self._config_nombre)
+                if p not in rutas:
+                    rutas.append(p)
+        except Exception:
+            pass
+
+        # Android Activity getFilesDir
+        try:
+            from jnius import autoclass
+            PythonActivity = autoclass('org.kivy.android.PythonActivity')
+            activity = PythonActivity.mActivity
+            if activity:
+                files_dir = activity.getFilesDir()
+                if files_dir:
+                    p = os.path.join(files_dir.getAbsolutePath(), self._config_nombre)
+                    if p not in rutas:
+                        rutas.append(p)
+        except Exception:
+            pass
+
+        # Directorio local de trabajo
         ruta_local = os.path.join(os.getcwd(), self._config_nombre)
         if ruta_local not in rutas:
             rutas.append(ruta_local)
+
+        # Directorios de usuario en el sistema
+        try:
+            home = os.path.expanduser("~")
+            if home:
+                rutas_home = [
+                    os.path.join(home, ".bastonapp", self._config_nombre),
+                    os.path.join(home, ".config", "bastonapp", self._config_nombre),
+                    os.path.join(home, self._config_nombre)
+                ]
+                for rh in rutas_home:
+                    if rh not in rutas:
+                        rutas.append(rh)
+        except Exception:
+            pass
+
         return rutas
+
+    def actualizar_directorio_datos(self, nuevo_directorio):
+        """Permite vincular el user_data_dir de Kivy una vez que la App ha iniciado."""
+        if nuevo_directorio:
+            self._directorio_personalizado = nuevo_directorio
+            self.recargar_api_key()
+
+    def recargar_api_key(self):
+        """Vuelve a comprobar todas las rutas de almacenamiento para cargar la clave guardada."""
+        key = self._cargar_api_key()
+        if key:
+            self.api_key = key
+        return self.api_key
 
     def limpiar_api_key(self, api_key):
         """Normaliza una clave copiada desde teclado, portapapeles o voz."""
@@ -107,16 +180,11 @@ class AIAssistant:
         return "".join(key.split())
 
     def es_api_key_gemini_valida(self, api_key):
-        """Validación local para admitir las claves oficiales de Google AI Studio (AQ. y AIza)."""
+        """Valida que la clave tenga el formato o longitud adecuada de Google AI Studio."""
         key = self.limpiar_api_key(api_key)
         if not key:
             return False
-        # Google AI Studio genera Authorization Keys que empiezan con 'AQ.' (o 'AQ') y Standard Keys ('AIza')
-        if (key.startswith("AIza") or key.startswith("AQ.") or key.startswith("AQ")) and len(key) >= 20:
-            return True
-        if len(key) >= 25:
-            return True
-        return False
+        return len(key) >= 15
 
     def _leer_api_key_desde_archivo(self, ruta):
         try:
@@ -153,33 +221,39 @@ class AIAssistant:
             if self.es_api_key_gemini_valida(key_conf):
                 print(f"[AIAssistant] API Key de Gemini cargada correctamente desde: {ruta}")
                 return key_conf
-            print(f"[AIAssistant] Config ignorada: la clave no parece ser de Gemini ({ruta}).")
+            print(f"[AIAssistant] Config ignorada: la clave no parece ser válida ({ruta}).")
 
         return self.api_key_defecto
 
     def guardar_api_key(self, nueva_key):
-        """Guarda la API Key de forma persistente."""
+        """Guarda la API Key de forma persistente en todas las ubicaciones seguras."""
         key_limpia = self.limpiar_api_key(nueva_key)
         self.ultimo_error_config = ""
 
         if not self.es_api_key_gemini_valida(key_limpia):
-            self.ultimo_error_config = "La clave no parece ser de Gemini. Debe comenzar con AIza o AQ."
+            self.ultimo_error_config = "La clave no parece ser válida. Debe tener al menos 15 caracteres."
             print(f"[AIAssistant] {self.ultimo_error_config}")
             return False
 
-        try:
-            ruta = self.archivo_config
-            carpeta = os.path.dirname(ruta)
-            if carpeta:
-                os.makedirs(carpeta, exist_ok=True)
-            with open(ruta, "w", encoding="utf-8") as f:
-                json.dump({"api_key": key_limpia}, f, ensure_ascii=False)
+        guardado_exitoso = False
+        # Guardar en todas las rutas posibles del dispositivo
+        for ruta in self._rutas_config_posibles():
+            try:
+                carpeta = os.path.dirname(ruta)
+                if carpeta:
+                    os.makedirs(carpeta, exist_ok=True)
+                with open(ruta, "w", encoding="utf-8") as f:
+                    json.dump({"api_key": key_limpia}, f, ensure_ascii=False)
+                guardado_exitoso = True
+                print(f"[AIAssistant] Clave API guardada en: {ruta}")
+            except Exception as e:
+                print(f"[AIAssistant] Aviso al guardar en {ruta}: {e}")
+
+        if guardado_exitoso:
             self.api_key = key_limpia
-            print(f"[AIAssistant] Clave API guardada en: {ruta}")
             return True
-        except Exception as e:
-            self.ultimo_error_config = "No se pudo guardar la clave en el almacenamiento de la app."
-            print(f"[AIAssistant] Error al guardar config API Key: {e}")
+        else:
+            self.ultimo_error_config = "No se pudo guardar la clave en el almacenamiento del dispositivo."
             return False
 
     def tiene_api_key_configurada(self):
@@ -187,7 +261,7 @@ class AIAssistant:
 
     def _crear_request_gemini(self, model, payload, timeout_segundos=9):
         key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        url = self._url_gemini(model)
         data_bytes = json.dumps(payload).encode("utf-8")
         headers = {
             "Content-Type": "application/json",
@@ -196,12 +270,14 @@ class AIAssistant:
         return urllib.request.Request(url, data=data_bytes, headers=headers), timeout_segundos
 
     def _url_gemini(self, model):
-        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
     def _headers_gemini(self):
+        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
         return {
             "Content-Type": "application/json",
-            "x-goog-api-key": self.limpiar_api_key(self.api_key or self._cargar_api_key()),
+            "x-goog-api-key": key,
         }
 
     def _extraer_texto_respuesta(self, res_json):
@@ -379,8 +455,8 @@ class AIAssistant:
             ]
         }
 
-        # Modelos actuales vigentes de Gemini (los modelos 2.0 y 1.5 fueron retirados).
-        modelos = ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.8-flash"]
+        # Modelos compatibles de Gemini en orden de rapidez y cuota
+        modelos = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
         
         for model in modelos:
             try:
@@ -438,7 +514,7 @@ class AIAssistant:
                 ]
             }
 
-            for model in ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.8-flash"]:
+            for model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
                 try:
                     txt_limpio = self._post_gemini(model, payload, timeout_segundos=10)
                     if txt_limpio:

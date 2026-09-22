@@ -36,6 +36,8 @@ class BastonApp(App):
         self.agenda = AgendaManager()
         self.lector = DocumentReader()
         self.ai = AIAssistant()
+        if hasattr(self, 'user_data_dir') and self.user_data_dir:
+            self.ai.actualizar_directorio_datos(self.user_data_dir)
         
         self.evento_navegacion = None
         self._analizando_camino = False
@@ -46,96 +48,17 @@ class BastonApp(App):
 
         # Vincular toque en cualquier parte de la pantalla para accesibilidad (cancelar ruta con toque)
         Window.bind(on_touch_down=self.al_tocar_pantalla)
-        Window.clearcolor = (0.0, 0.0, 0.0, 1)  # Fondo negro OLED absoluto
 
         self.layout = BoxLayout(
             orientation='vertical',
-            padding=[dp(16), dp(16), dp(16), dp(16)],
-            spacing=dp(12)
+            padding=[dp(16), dp(14), dp(16), dp(16)],
+            spacing=dp(10)
         )
 
-        # 1. Barra Superior de Alto Contraste con Botón de Clave API
-        self.layout_top = BoxLayout(
-            orientation='horizontal',
-            size_hint=(1, None),
-            height=dp(48),
-            spacing=dp(8)
-        )
-        self.lbl_baston = Label(
-            text="BASTÓN OK",
-            bold=True,
-            font_size='18sp',
-            color=(1.0, 0.85, 0.0, 1)  # Amarillo tráfico
-        )
-        self.btn_config_api = Button(
-            text="API GEMINI",
-            font_size='14sp',
-            bold=True,
-            size_hint=(None, 1),
-            width=dp(130),
-            background_normal='',
-            background_color=(1.0, 0.85, 0.0, 1),
-            color=(0, 0, 0, 1)
-        )
-        self.btn_config_api.bind(on_press=self.al_toggle_panel_api)
-        self.btn_config = self.btn_config_api  # Alias de compatibilidad
-
-        self.layout_top.add_widget(self.lbl_baston)
-        self.layout_top.add_widget(self.btn_config_api)
-        self.layout.add_widget(self.layout_top)
-
-        # 2. Panel Plegable para Configurar y Pegar la Clave API
-        self.panel_api = BoxLayout(
-            orientation='vertical',
-            spacing=dp(6),
-            size_hint=(1, None),
-            height=0,
-            opacity=0
-        )
-        self.input_api_key = TextInput(
-            text=self.ai.api_key or "",
-            hint_text="Pega tu clave API aquí...",
-            multiline=False,
-            size_hint=(1, None),
-            height=dp(46),
-            background_color=(0.12, 0.12, 0.12, 1),
-            foreground_color=(1, 1, 1, 1),
-            cursor_color=(1, 0.85, 0, 1),
-            font_size='14sp'
-        )
-        self.panel_api.add_widget(self.input_api_key)
-
-        self.btn_pegar_api = Button(
-            text="Pegar del Portapapeles",
-            font_size='15sp',
-            bold=True,
-            size_hint=(1, None),
-            height=dp(42),
-            background_normal='',
-            background_color=(0.2, 0.2, 0.2, 1),
-            color=(1, 0.85, 0, 1)
-        )
-        self.btn_pegar_api.bind(on_press=self.al_pegar_api_key_clipboard)
-        self.panel_api.add_widget(self.btn_pegar_api)
-
-        self.btn_guardar_api = Button(
-            text="Guardar Clave API",
-            font_size='16sp',
-            bold=True,
-            size_hint=(1, None),
-            height=dp(44),
-            background_normal='',
-            background_color=(1, 0.85, 0, 1),
-            color=(0, 0, 0, 1)
-        )
-        self.btn_guardar_api.bind(on_press=self.al_guardar_api_key_ui)
-        self.panel_api.add_widget(self.btn_guardar_api)
-        self.layout.add_widget(self.panel_api)
-
-        # 3. Zona Central: Visor de Texto y Respuestas en Tipografía Gigante
+        # ── Etiqueta de estado principal ──────────────────────────────────────
         self.lbl_estado = Label(
-            text="Esperando palma abierta...",
-            font_size='26sp',
+            text="Asistente de Autonomía\nEscucha activa",
+            font_size='20sp',
             bold=True,
             color=(1, 1, 1, 1),
             halign='center',
@@ -145,7 +68,6 @@ class BastonApp(App):
         self.lbl_estado.bind(size=self.lbl_estado.setter('text_size'))
         self.layout.add_widget(self.lbl_estado)
 
-        # Widget de QR preservado oculto para compatibilidad
         self.img_qr = Image(
             size_hint=(1, None),
             height=0,
@@ -153,18 +75,96 @@ class BastonApp(App):
         )
         self.layout.add_widget(self.img_qr)
 
-        # 4. Botón Táctil Gigante (Cubre toda el área de contacto para baja visión)
-        self.btn_accion = Button(
-            text="TOCA PARA HABLAR\n(O MUESTRA LA PALMA)",
-            font_size='22sp',
-            bold=True,
+        # ── Panel de configuración de clave API (oculto por defecto) ──────────
+        self.panel_api = BoxLayout(
+            orientation='vertical',
+            spacing=dp(6),
             size_hint=(1, None),
-            height=dp(150),
-            background_normal='',
-            background_color=(1.0, 0.85, 0.0, 1),
-            color=(0, 0, 0, 1),
+            height=0,
+            opacity=0
+        )
+
+        lbl_api_titulo = Label(
+            text="Clave API de Gemini",
+            font_size='17sp',
+            bold=True,
+            color=(0.9, 0.8, 0.2, 1),
+            size_hint=(1, None),
+            height=dp(30),
             halign='center'
         )
+        lbl_api_titulo.bind(size=lbl_api_titulo.setter('text_size'))
+        self.panel_api.add_widget(lbl_api_titulo)
+
+        self.input_api_key = TextInput(
+            text=self.ai.api_key or "",
+            hint_text="Pega aquí tu clave API de Gemini...",
+            font_size='15sp',
+            multiline=False,
+            size_hint=(1, None),
+            height=dp(48),
+            background_color=(0.12, 0.16, 0.22, 1),
+            foreground_color=(1, 1, 1, 1),
+            cursor_color=(0.9, 0.8, 0.2, 1),
+            padding=[dp(10), dp(12)]
+        )
+        self.panel_api.add_widget(self.input_api_key)
+
+        self.btn_pegar_api = Button(
+            text="Pegar Clave del Portapapeles",
+            font_size='15sp',
+            bold=True,
+            size_hint=(1, None),
+            height=dp(44),
+            background_normal='',
+            background_color=(0.15, 0.55, 0.45, 1),
+            color=(1, 1, 1, 1)
+        )
+        self.btn_pegar_api.bind(on_press=self.al_pegar_api_key_clipboard)
+        self.panel_api.add_widget(self.btn_pegar_api)
+
+        self.btn_guardar_api = Button(
+            text="Guardar Clave API",
+            font_size='17sp',
+            bold=True,
+            size_hint=(1, None),
+            height=dp(48),
+            background_normal='',
+            background_color=(0.1, 0.5, 0.85, 1),
+            color=(1, 1, 1, 1)
+        )
+        self.btn_guardar_api.bind(on_press=self.al_guardar_api_key_ui)
+        self.panel_api.add_widget(self.btn_guardar_api)
+
+        self.layout.add_widget(self.panel_api)
+
+        # ── Botón de configuración (engranaje) ────────────────────────────────
+        self.btn_config = Button(
+            text="Configurar Clave API",
+            font_size='16sp',
+            size_hint=(1, None),
+            height=dp(44),
+            background_normal='',
+            background_color=(0.18, 0.22, 0.30, 1),
+            color=(1, 1, 1, 1)
+        )
+        self.btn_config.bind(on_press=self.al_toggle_panel_api)
+        self.layout.add_widget(self.btn_config)
+
+        # ── Botón principal indicador de escucha continua ─────────────────────
+        self.btn_accion = Button(
+            text="ESCUCHA ACTIVA\nHabla libremente",
+            font_size='19sp',
+            bold=True,
+            size_hint=(1, None),
+            height=dp(118),
+            background_normal='',
+            background_color=(0.1, 0.65, 0.45, 1),
+            color=(1, 1, 1, 1),
+            halign='center',
+            valign='middle'
+        )
+        self.btn_accion.bind(size=self.btn_accion.setter('text_size'))
         self.btn_accion.bind(on_press=self.al_presionar_boton_escucha)
         self.layout.add_widget(self.btn_accion)
 
@@ -208,9 +208,9 @@ class BastonApp(App):
             Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.15)
         else:
             self.lbl_estado.text = "Navegación cancelada."
-            self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
-            self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
-            self.btn_accion.color = (0, 0, 0, 1)
+            self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
+            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+            self.btn_accion.color = (1, 1, 1, 1)
             self.voz.hablar("Navegación y copiloto visual cancelados.")
             self.programar_reinicio_control_por_gesto(0.2)
 
@@ -218,19 +218,15 @@ class BastonApp(App):
         if self.panel_api.opacity == 0:
             clave_actual = self.ai.api_key or ""
             self.input_api_key.text = clave_actual
-            self.panel_api.height = dp(142)
+            self.panel_api.height = dp(186)
             self.panel_api.opacity = 1
-            if hasattr(self, 'btn_config_api'):
-                self.btn_config_api.text = "CERRAR"
-                self.btn_config_api.background_color = (0.8, 0.2, 0.2, 1)
-                self.btn_config_api.color = (1, 1, 1, 1)
+            self.btn_config.text = "Cerrar Configuración"
+            self.btn_config.background_color = (0.45, 0.1, 0.1, 1)
         else:
             self.panel_api.height = 0
             self.panel_api.opacity = 0
-            if hasattr(self, 'btn_config_api'):
-                self.btn_config_api.text = "API GEMINI"
-                self.btn_config_api.background_color = (1.0, 0.85, 0.0, 1)
-                self.btn_config_api.color = (0, 0, 0, 1)
+            self.btn_config.text = "Configurar Clave API"
+            self.btn_config.background_color = (0.18, 0.22, 0.30, 1)
 
     def al_pegar_api_key_clipboard(self, instance):
         try:
@@ -249,17 +245,18 @@ class BastonApp(App):
     def al_guardar_api_key_ui(self, instance):
         nueva_key = self.input_api_key.text.strip()
         if not nueva_key:
-            self.lbl_estado.text = "Escribe la clave API antes de guardar."
+            self.lbl_estado.text = "Escribe o pega la clave API antes de guardar."
+            self.voz.hablar("Escribe o pega la clave antes de guardar.")
             return
 
         exito = self.ai.guardar_api_key(nueva_key)
         if exito:
-            self.lbl_estado.text = "Clave guardada. Probando conexión con Gemini..."
+            self.lbl_estado.text = "Clave guardada exitosamente. Probando conexión con Gemini..."
             self.voz.hablar("Clave guardada. Probando conexión con Gemini.")
             self.ai.probar_conexion_gemini_async(self.al_resultado_prueba_api)
         else:
-            detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave API de Gemini válida."
-            self.lbl_estado.text = f"Error al guardar la clave. {detalle}"
+            detalle = getattr(self.ai, 'ultimo_error_config', '') or "Verifica que sea una clave válida."
+            self.lbl_estado.text = f"Error al guardar la clave: {detalle}"
             self.voz.hablar(detalle)
 
     def al_resultado_prueba_api(self, exito, mensaje):
@@ -267,9 +264,9 @@ class BastonApp(App):
             self.lbl_estado.text = "Clave API de Gemini conectada correctamente."
             self.voz.hablar(mensaje)
             if self.panel_api.opacity != 0:
-                self.al_toggle_panel_api(None)
+                Clock.schedule_once(lambda dt: self.al_toggle_panel_api(None), 2.0)
         else:
-            self.lbl_estado.text = f"Gemini no respondió: {mensaje}"
+            self.lbl_estado.text = f"Gemini: {mensaje}"
             self.voz.hablar(mensaje)
 
     def solicitar_permisos_android(self):
@@ -347,9 +344,9 @@ class BastonApp(App):
             pass
 
         self.lbl_estado.text = "Muestra la palma abierta frente a la cámara para ordenar."
-        self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
-        self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
-        self.btn_accion.color = (0, 0, 0, 1)
+        self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
+        self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+        self.btn_accion.color = (1, 1, 1, 1)
 
     def iniciar_control_por_gesto(self):
         if not self.voz.activity or self._camara_en_uso_por_comando or self.gps.navegacion_activa:
@@ -357,14 +354,14 @@ class BastonApp(App):
         iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
         if iniciado:
             self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
-            self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
-            self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
-            self.btn_accion.color = (0, 0, 0, 1)
+            self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
+            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+            self.btn_accion.color = (1, 1, 1, 1)
         else:
             self.lbl_estado.text = "Asistente listo. Presiona el botón para dar una orden."
-            self.btn_accion.text = "TOCA PARA HABLAR\nPresiona para dar un comando"
-            self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
-            self.btn_accion.color = (0, 0, 0, 1)
+            self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
+            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+            self.btn_accion.color = (1, 1, 1, 1)
 
     def activar_comando_por_gesto(self):
         """
@@ -423,9 +420,9 @@ class BastonApp(App):
         # La cámara se reenciende de inmediato y vigila la palma abierta mientras el asistente responde
         self.vision.reanudar_detector_gesto(self.activar_comando_por_gesto)
 
-        self.btn_accion.text = "TOCA PARA HABLAR\n(O MUESTRA LA PALMA)"
-        self.btn_accion.background_color = (1.0, 0.85, 0.0, 1)
-        self.btn_accion.color = (0, 0, 0, 1)
+        self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
+        self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
+        self.btn_accion.color = (1, 1, 1, 1)
 
     def mantener_activa_con_pantalla_apagada(self):
         try:
