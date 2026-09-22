@@ -106,12 +106,20 @@ class VisionAnalyzer:
 
             def iniciar():
                 try:
-                    ruta_modelo_gesto = os.path.join(
-                        PythonActivity.mActivity.getFilesDir().getAbsolutePath(),
-                        "app", "models", "hand_landmarker.task"
-                    )
-                    if not os.path.exists(ruta_modelo_gesto):
-                        raise RuntimeError(f"No se encontró el modelo local de manos: {ruta_modelo_gesto}")
+                    posibles_rutas = [
+                        os.path.join(PythonActivity.mActivity.getFilesDir().getAbsolutePath(), "app", "models", "hand_landmarker.task"),
+                        os.path.join(PythonActivity.mActivity.getFilesDir().getAbsolutePath(), "models", "hand_landmarker.task"),
+                        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "models", "hand_landmarker.task"),
+                        os.path.join(os.getcwd(), "models", "hand_landmarker.task"),
+                        "models/hand_landmarker.task"
+                    ]
+                    ruta_modelo_gesto = None
+                    for r in posibles_rutas:
+                        if os.path.exists(r):
+                            ruta_modelo_gesto = r
+                            break
+                    if not ruta_modelo_gesto:
+                        ruta_modelo_gesto = posibles_rutas[0]
                     self._detector_gesto = Detector(PythonActivity.mActivity, ruta_modelo_gesto)
                     camera_id = self._seleccionar_camara_trasera(Camera, CameraInfo)
                     self._camara_gesto = Camera.open(camera_id)
@@ -144,7 +152,7 @@ class VisionAnalyzer:
 
     def _recibir_cuadro_gesto(self, data):
         ahora = time.monotonic()
-        if (not self._gesto_activo or self._procesando_cuadro_gesto or ahora - self._ultimo_cuadro_gesto < 0.55):
+        if (not self._gesto_activo or self._procesando_cuadro_gesto or ahora - self._ultimo_cuadro_gesto < 0.30):
             return
         self._ultimo_cuadro_gesto = ahora
         self._procesando_cuadro_gesto = True
@@ -161,7 +169,7 @@ class VisionAnalyzer:
                 cuadro, self._gesto_ancho, self._gesto_alto
             ))
             self._palmas_consecutivas = self._palmas_consecutivas + 1 if palma_abierta else 0
-            if self._palmas_consecutivas >= 2:
+            if self._palmas_consecutivas >= 1:
                 self._palmas_consecutivas = 0
                 Clock.schedule_once(lambda dt: self._activar_por_gesto(), 0)
         except Exception as error:

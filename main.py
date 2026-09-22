@@ -107,6 +107,19 @@ class BastonApp(App):
         )
         self.panel_api.add_widget(self.input_api_key)
 
+        self.btn_pegar_api = Button(
+            text="Pegar Clave del Portapapeles",
+            font_size='15sp',
+            bold=True,
+            size_hint=(1, None),
+            height=dp(44),
+            background_normal='',
+            background_color=(0.15, 0.55, 0.45, 1),
+            color=(1, 1, 1, 1)
+        )
+        self.btn_pegar_api.bind(on_press=self.al_pegar_api_key_clipboard)
+        self.panel_api.add_widget(self.btn_pegar_api)
+
         self.btn_guardar_api = Button(
             text="Guardar Clave API",
             font_size='17sp',
@@ -194,7 +207,7 @@ class BastonApp(App):
         if self.panel_api.opacity == 0:
             clave_actual = self.ai.api_key or ""
             self.input_api_key.text = clave_actual
-            self.panel_api.height = dp(138)
+            self.panel_api.height = dp(186)
             self.panel_api.opacity = 1
             self.btn_config.text = "Cerrar Configuración"
             self.btn_config.background_color = (0.45, 0.1, 0.1, 1)
@@ -203,6 +216,20 @@ class BastonApp(App):
             self.panel_api.opacity = 0
             self.btn_config.text = "Configurar Clave API"
             self.btn_config.background_color = (0.18, 0.22, 0.30, 1)
+
+    def al_pegar_api_key_clipboard(self, instance):
+        try:
+            from kivy.core.clipboard import Clipboard
+            texto = Clipboard.paste()
+            if texto and texto.strip():
+                self.input_api_key.text = texto.strip()
+                self.lbl_estado.text = "Clave pegada. Presiona 'Guardar Clave API'."
+                self.voz.hablar("Clave pegada del portapapeles. Presiona guardar.")
+            else:
+                self.lbl_estado.text = "El portapapeles está vacío. Copia la clave de AI Studio primero."
+                self.voz.hablar("El portapapeles está vacío. Copia la clave primero.")
+        except Exception as e:
+            self.lbl_estado.text = f"Error al acceder al portapapeles: {e}"
 
     def al_guardar_api_key_ui(self, instance):
         nueva_key = self.input_api_key.text.strip()
@@ -298,20 +325,15 @@ class BastonApp(App):
         except Exception as e:
             print(f"[BastonApp] Bluetooth auto-reconexion: {e}")
 
-        mensaje_bienvenida = "¡Hola! Soy tu copiloto visual. Control por gestos y voz activo. ¡Muestra tu palma abierta o dime en qué te ayudo!"
+        mensaje_bienvenida = "Asistente listo. Muestra tu palma abierta frente a la cámara trasera para dar un comando."
         try:
             self.voz.hablar(mensaje_bienvenida, perfil="animada")
         except Exception:
             pass
 
-        if not self.voz.activity:
-            try:
-                self.voz.iniciar_escucha_continua(
-                    callback_comando=self.procesar_comando_texto,
-                    callback_parcial=self.al_recibir_parcial
-                )
-            except Exception:
-                pass
+        self.lbl_estado.text = "Muestra la palma abierta frente a la cámara para ordenar."
+        self.btn_accion.text = "CONTROL POR GESTO ACTIVO\nMuestra tu palma abierta o toca aquí"
+        self.btn_accion.background_color = (0.1, 0.5, 0.7, 1)
 
     def iniciar_control_por_gesto(self):
         if not self.voz.activity or self._camara_en_uso_por_comando or self.gps.navegacion_activa:
@@ -319,19 +341,34 @@ class BastonApp(App):
         iniciado = self.vision.iniciar_detector_gesto(self.activar_comando_por_gesto)
         if iniciado:
             self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
+            self.btn_accion.text = "ESPERANDO PALMA ABIERTA\nMuestra tu mano abierta para hablar"
+            self.btn_accion.background_color = (0.1, 0.45, 0.7, 1)
         else:
-            self.lbl_estado.text = "Asistente listo. Presiona el botón o habla para ordenar."
+            self.lbl_estado.text = "Asistente listo. Presiona el botón para dar una orden."
+            self.btn_accion.text = "TOCA PARA HABLAR\nPresiona para dar un comando"
+            self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
 
     def activar_comando_por_gesto(self):
-        self.lbl_estado.text = "Gesto detectado. Preparando micrófono..."
-        Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.45)
+        """Se activa al ver la palma abierta: detiene la cámara y abre el micrófono de inmediato."""
+        self.lbl_estado.text = "¡Palma detectada! Abriendo micrófono..."
+        self.btn_accion.text = "ABRIENDO MICRÓFONO...\nEspera un segundo"
+        self.btn_accion.background_color = (0.8, 0.5, 0.1, 1)
+        self.voz.detener_voz()
+        self.vision.detener_detector_gesto()
+        Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.15)
 
     def _abrir_comando_por_gesto(self):
-        if self.voz.escuchar_una_vez(self.procesar_comando_texto, self.programar_reinicio_control_por_gesto):
-            self.lbl_estado.text = "Micrófono activo. Di tu comando."
+        def _al_finalizar_escucha():
+            self.programar_reinicio_control_por_gesto()
+
+        self.voz.detener_voz()
+        if self.voz.escuchar_una_vez(self.procesar_comando_texto, _al_finalizar_escucha):
+            self.lbl_estado.text = "Micrófono activo. Di tu comando ahora..."
+            self.btn_accion.text = "MICRÓFONO ACTIVO\nTe escucho, di tu comando..."
+            self.btn_accion.background_color = (0.85, 0.2, 0.2, 1)
             self.emitir_vibracion_bienvenida()
         else:
-            self.lbl_estado.text = "Micrófono ocupado. Vuelve a mostrar la palma."
+            self.lbl_estado.text = "Micrófono no disponible. Reintentando..."
             Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
     def programar_reinicio_control_por_gesto(self):

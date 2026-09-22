@@ -5,15 +5,17 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.ImageFormat;
 import android.graphics.YuvImage;
-
 import com.google.mediapipe.framework.image.BitmapImageBuilder;
 import com.google.mediapipe.framework.image.MPImage;
 import com.google.mediapipe.tasks.components.containers.NormalizedLandmark;
 import com.google.mediapipe.tasks.core.BaseOptions;
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarker;
 import com.google.mediapipe.tasks.vision.handlandmarker.HandLandmarkerResult;
-
 import java.io.ByteArrayOutputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.List;
 
 /** Detecta una mano abierta localmente. No envía imágenes ni datos a Internet. */
@@ -21,15 +23,31 @@ public final class HandSignalDetector {
     private final HandLandmarker landmarker;
 
     public HandSignalDetector(Context context, String modelPath) {
-        BaseOptions baseOptions = BaseOptions.builder()
-                // python-for-android instala este modelo como archivo privado, no en assets/.
-                .setModelAssetPath(modelPath)
-                .build();
+        BaseOptions.Builder baseOptionsBuilder = BaseOptions.builder();
+        boolean loadedBuffer = false;
+        try {
+            File file = new File(modelPath);
+            if (file.exists() && file.canRead()) {
+                FileInputStream fis = new FileInputStream(file);
+                FileChannel channel = fis.getChannel();
+                MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
+                fis.close();
+                baseOptionsBuilder.setModelAssetBuffer(buffer);
+                loadedBuffer = true;
+            }
+        } catch (Exception ignored) {
+            loadedBuffer = false;
+        }
+
+        if (!loadedBuffer) {
+            baseOptionsBuilder.setModelAssetPath(modelPath);
+        }
+
         HandLandmarker.HandLandmarkerOptions options = HandLandmarker.HandLandmarkerOptions.builder()
-                .setBaseOptions(baseOptions)
+                .setBaseOptions(baseOptionsBuilder.build())
                 .setNumHands(1)
-                .setMinHandDetectionConfidence(0.70f)
-                .setMinHandPresenceConfidence(0.70f)
+                .setMinHandDetectionConfidence(0.60f)
+                .setMinHandPresenceConfidence(0.60f)
                 .build();
         landmarker = HandLandmarker.createFromOptions(context, options);
     }
@@ -38,7 +56,7 @@ public final class HandSignalDetector {
         try {
             YuvImage yuv = new YuvImage(frame, ImageFormat.NV21, width, height, null);
             ByteArrayOutputStream jpeg = new ByteArrayOutputStream();
-            if (!yuv.compressToJpeg(new android.graphics.Rect(0, 0, width, height), 75, jpeg)) {
+            if (!yuv.compressToJpeg(new android.graphics.Rect(0, 0, width, height), 70, jpeg)) {
                 return false;
             }
             byte[] bytes = jpeg.toByteArray();
@@ -68,7 +86,7 @@ public final class HandSignalDetector {
         for (int i = 0; i < tips.length; i++) {
             float baseDistance = distance(wrist, points.get(bases[i]));
             float tipDistance = distance(wrist, points.get(tips[i]));
-            if (baseDistance > 0.02f && tipDistance > baseDistance * 1.55f) {
+            if (baseDistance > 0.02f && tipDistance > baseDistance * 1.30f) {
                 extended++;
             }
         }
@@ -83,6 +101,8 @@ public final class HandSignalDetector {
     }
 
     public void close() {
-        landmarker.close();
+        if (landmarker != null) {
+            landmarker.close();
+        }
     }
 }

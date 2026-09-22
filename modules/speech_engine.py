@@ -475,9 +475,12 @@ class SpeechEngine:
 
             def parar():
                 try:
-                    self.speech_rec.cancel()
+                    if self.speech_rec:
+                        self.speech_rec.cancel()
+                        self.speech_rec.destroy()
                 except Exception:
                     pass
+                self.speech_rec = None
 
             PythonActivity.mActivity.runOnUiThread(Runnable(parar))
         except Exception:
@@ -498,8 +501,9 @@ class SpeechEngine:
         self.escuchando = False
 
     def escuchar_una_vez(self, callback_comando, callback_finalizar=None):
-        if self.escuchando or self.reproduciendo_tts:
-            return False
+        """Detiene locuciones previas, libera el micro y escucha un comando único."""
+        self.detener_voz()
+        self._detener_speech_recognizer_android()
         self._escucha_una_vez = True
         self._callback_fin_escucha_una_vez = callback_finalizar
         self.escuchando = True
@@ -515,10 +519,11 @@ class SpeechEngine:
             return
         self.escuchando = False
         self._escucha_una_vez = False
+        self._detener_speech_recognizer_android()
         callback = self._callback_fin_escucha_una_vez
         self._callback_fin_escucha_una_vez = None
         if callback:
-            Clock.schedule_once(lambda dt: callback(), 0)
+            Clock.schedule_once(lambda dt: callback(), 0.1)
 
     def _loop_escucha_continua(self, callback_comando, callback_parcial):
         if self.activity:
@@ -687,6 +692,13 @@ class SpeechEngine:
             
             def accion_ui():
                 try:
+                    if hasattr(self, 'speech_rec') and self.speech_rec:
+                        try:
+                            self.speech_rec.cancel()
+                            self.speech_rec.destroy()
+                        except Exception:
+                            pass
+                        self.speech_rec = None
                     self.speech_rec = SpeechRecognizer.createSpeechRecognizer(PythonActivity.mActivity)
                     self.speech_rec.setRecognitionListener(self.escuchador_listener)
 

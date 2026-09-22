@@ -109,7 +109,11 @@ class AIAssistant:
     def es_api_key_gemini_valida(self, api_key):
         """Validación local básica para evitar guardar claves de otro servicio."""
         key = self.limpiar_api_key(api_key)
-        return (key.startswith("AIza") or key.startswith("AQ.")) and len(key) >= 30
+        if (key.startswith("AIza") or key.startswith("AQ.")) and len(key) >= 30:
+            return True
+        if len(key) >= 35 and key.isalnum():
+            return True
+        return False
 
     def _leer_api_key_desde_archivo(self, ruta):
         try:
@@ -189,7 +193,8 @@ class AIAssistant:
         return urllib.request.Request(url, data=data_bytes, headers=headers), timeout_segundos
 
     def _url_gemini(self, model):
-        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
+        return f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
 
     def _headers_gemini(self):
         return {
@@ -371,7 +376,7 @@ class AIAssistant:
         }
 
         # Modelos actuales de Gemini. Se prueban en orden de rapidez y con respaldo.
-        modelos = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        modelos = ["gemini-2.0-flash", "gemini-1.5-flash"]
         
         for model in modelos:
             try:
@@ -429,7 +434,7 @@ class AIAssistant:
                 ]
             }
 
-            for model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+            for model in ["gemini-2.0-flash", "gemini-1.5-flash"]:
                 try:
                     txt_limpio = self._post_gemini(model, payload, timeout_segundos=10)
                     if txt_limpio:
