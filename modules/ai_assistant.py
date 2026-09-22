@@ -84,11 +84,24 @@ def obtener_nivel_bateria():
     return "No se pudo obtener el porcentaje de batería en este dispositivo."
 
 class AIAssistant:
+    MODELOS_PRIORITARIOS = [
+        "gemini-3.6-flash",
+        "gemini-3.8-flash",
+        "gemini-flash-latest",
+        "gemini-3.5-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-3.1-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
+    ]
+
     def __init__(self, directorio_datos=None):
         self._config_nombre = "config_gemini.json"
         self._directorio_personalizado = directorio_datos
         self.api_key_defecto = ""
         self.ultimo_error_config = ""
+        self.modelo_activo = None
+        self._modelos_detectados_cache = []
         self.api_key = self._cargar_api_key()
 
     @property
@@ -294,6 +307,51 @@ class AIAssistant:
         res_json = json.loads(response.read().decode("utf-8"))
         return self._extraer_texto_respuesta(res_json)
 
+    def _obtener_modelos_candidatos(self):
+        """Devuelve la lista ordenada de modelos candidatos, priorizando el modelo activo o descubierto."""
+        candidatos = []
+        if self.modelo_activo:
+            candidatos.append(self.modelo_activo)
+        if self._modelos_detectados_cache:
+            for m in self._modelos_detectados_cache:
+                if m not in candidatos:
+                    candidatos.append(m)
+        for p in self.MODELOS_PRIORITARIOS:
+            if p not in candidatos:
+                candidatos.append(p)
+        return candidatos
+
+    def _detectar_modelos_disponibles_api(self):
+        """Descubre automáticamente qué modelos Flash están activos y autorizados para la clave."""
+        key = self.limpiar_api_key(self.api_key or self._cargar_api_key())
+        if not key:
+            return []
+        url = f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+        try:
+            req = urllib.request.Request(url, headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    detectados = []
+                    for m in data.get("models", []):
+                        nombre = m.get("name", "").replace("models/", "")
+                        metodos = m.get("supportedGenerationMethods", [])
+                        if "generateContent" in metodos and ("flash" in nombre or "gemini" in nombre) and "tts" not in nombre and "image" not in nombre:
+                            detectados.append(nombre)
+                    # Reordenar según prioridad
+                    ordenados = []
+                    for p in self.MODELOS_PRIORITARIOS:
+                        if p in detectados:
+                            ordenados.append(p)
+                    for o in detectados:
+                        if o not in ordenados:
+                            ordenados.append(o)
+                    self._modelos_detectados_cache = ordenados
+                    return ordenados
+        except Exception as e:
+            print(f"[AIAssistant] No se pudo auto-descubrir modelos: {e}")
+        return []
+
     def _post_gemini(self, model, payload, timeout_segundos=9):
         """Hace la llamada a Gemini con requests; urllib queda como respaldo."""
         url = self._url_gemini(model)
@@ -310,18 +368,30 @@ class AIAssistant:
                 verify=certifi.where(),
             )
             if response.status_code == 200:
+                self.modelo_activo = model
                 return self._extraer_texto_respuesta(response.json())
 
-            self.ultimo_error_config = self._mensaje_error_api(response.status_code, response.text)
+            self.ultimo_error_config = self._mensaje_error_api(response.status_code, response.text, model)
             print(f"[AIAssistant] Error Gemini {model}: HTTP {response.status_code} - {response.text}")
             return ""
         except Exception as requests_error:
             print(f"[AIAssistant] requests falló en {model}: {requests_error}. Intentando urllib...")
 
         req, timeout_urllib = self._crear_request_gemini(model, payload, timeout_segundos=timeout_segundos)
-        with urllib.request.urlopen(req, timeout=timeout_urllib) as response:
-            if response.status == 200:
-                return self._leer_respuesta_gemini(response)
+        try:
+            with urllib.request.urlopen(req, timeout=timeout_urllib) as response:
+                if response.status == 200:
+                    self.modelo_activo = model
+                    return self._leer_respuesta_gemini(response)
+        except urllib.error.HTTPError as http_err:
+            try:
+                det = http_err.read().decode("utf-8", errors="replace")
+            except Exception:
+                det = str(http_err)
+            self.ultimo_error_config = self._mensaje_error_api(http_err.code, det, model)
+            print(f"[AIAssistant] urllib error HTTP {http_err.code} en {model}: {det}")
+        except Exception as e:
+            self._registrar_error_gemini(model, e)
         return ""
 
     def _registrar_error_gemini(self, contexto, error):
@@ -330,7 +400,7 @@ class AIAssistant:
                 detalle = error.read().decode("utf-8", errors="replace")
             except Exception:
                 detalle = str(error)
-            self.ultimo_error_config = self._mensaje_error_api(error.code, detalle)
+            self.ultimo_error_config = self._mensaje_error_api(error.code, detalle, contexto)
             print(f"[AIAssistant] Error Gemini {contexto}: HTTP {error.code} - {detalle}")
         else:
             self.ultimo_error_config = self._mensaje_error_conexion(error)
@@ -352,16 +422,16 @@ class AIAssistant:
             return "El WiFi está conectado, pero Android no puede salir a internet desde la app."
         return f"No se pudo conectar con Gemini. Error técnico: {str(error)[:90]}"
 
-    def _mensaje_error_api(self, codigo, detalle=""):
+    def _mensaje_error_api(self, codigo, detalle="", model=""):
         texto = str(detalle).lower()
         if codigo in [401, 403]:
-            return "Google rechazó la clave API. Verifica que sea de Google AI Studio y que Gemini API esté habilitada."
+            return "Google rechazó la clave API (HTTP 403). Verifica en aistudio.google.com que tu proyecto tenga acceso a la API."
         if codigo == 404:
-            return "El modelo de Gemini no fue encontrado en los servidores de Google (HTTP 404)."
+            return f"El modelo {model or 'solicitado'} no está disponible en Google (HTTP 404)."
         if codigo == 429:
-            return "La clave llegó al límite de cuota. Revisa la cuota o facturación de Google AI Studio."
+            return "La clave llegó al límite de cuota (HTTP 429). Revisa la cuota en Google AI Studio."
         if codigo == 503:
-            return "Gemini está saturado temporalmente. Intenta de nuevo en unos minutos."
+            return "Gemini está saturado temporalmente (HTTP 503). Intenta de nuevo en unos minutos."
         if "api key" in texto or "key" in texto:
             return "Google reportó un problema con la clave API."
         return f"Gemini respondió con error HTTP {codigo}."
@@ -376,9 +446,15 @@ class AIAssistant:
 
     def _probar_conexion_gemini(self):
         self.ultimo_error_config = ""
+        # 1. Intentar descubrir modelos habilitados
+        detectados = self._detectar_modelos_disponibles_api()
+        if detectados:
+            self.modelo_activo = detectados[0]
+
         respuesta = self._consultar_gemini_api("Responde exactamente con la palabra OK.")
-        if respuesta and "no se pudo conectar" not in respuesta.lower() and "clave api" not in respuesta.lower():
-            return True, "Clave API comprobada. Gemini respondió correctamente."
+        if respuesta and "no se pudo conectar" not in respuesta.lower() and "clave api" not in respuesta.lower() and "no está disponible" not in respuesta.lower():
+            modelo_usado = self.modelo_activo or "Gemini Flash"
+            return True, f"Clave API comprobada exitosamente con {modelo_usado}. Gemini está listo."
 
         mensaje = self.ultimo_error_config or "Gemini no respondió. Revisa internet, cuota o permisos de la clave."
         return False, mensaje
@@ -456,7 +532,7 @@ class AIAssistant:
         }
 
         # Modelos compatibles de Gemini en orden de rapidez y cuota
-        modelos = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]
+        modelos = self._obtener_modelos_candidatos()
         
         for model in modelos:
             try:
@@ -467,7 +543,8 @@ class AIAssistant:
                 self._registrar_error_gemini(model, e)
                 continue
 
-        return "No se pudo conectar con la IA de Gemini. Verifica tu conexión a internet o tu clave API."
+        error_detalle = self.ultimo_error_config or "Verifica tu conexión a internet o tu clave API."
+        return f"No se pudo conectar con Gemini. {error_detalle}"
 
     def consultar_gemini_vision_async(self, ruta_imagen, prompt_instruccion, callback_respuesta):
         """Analiza una fotografía utilizando la API de Gemini Vision en un hilo secundario."""
@@ -514,7 +591,8 @@ class AIAssistant:
                 ]
             }
 
-            for model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+            modelos = self._obtener_modelos_candidatos()
+            for model in modelos:
                 try:
                     txt_limpio = self._post_gemini(model, payload, timeout_segundos=10)
                     if txt_limpio:
