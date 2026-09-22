@@ -28,6 +28,7 @@ class VisionAnalyzer:
         self._preview_gesto = None
         self._detector_gesto = None
         self._gesto_activo = False
+        self._pausado_gesto = False
         self._procesando_cuadro_gesto = False
         self._ultimo_cuadro_gesto = 0.0
         self._palmas_consecutivas = 0
@@ -150,9 +151,24 @@ class VisionAnalyzer:
             print(f"[VisionAnalyzer] Detector de gesto no disponible: {error}")
             return False
 
+    def pausar_detector_gesto(self):
+        """Pausa el análisis de cuadros de gestos sin destruir la cámara."""
+        self._pausado_gesto = True
+        self._palmas_consecutivas = 0
+        self._procesando_cuadro_gesto = False
+
+    def reanudar_detector_gesto(self):
+        """Reanuda la detección de gestos manteniendo la cámara activa."""
+        self._pausado_gesto = False
+        self._palmas_consecutivas = 0
+        self._procesando_cuadro_gesto = False
+        if not self._gesto_activo and self._camara_gesto:
+            self._gesto_activo = True
+
     def _recibir_cuadro_gesto(self, data):
         ahora = time.monotonic()
-        if (not self._gesto_activo or self._procesando_cuadro_gesto or ahora - self._ultimo_cuadro_gesto < 0.30):
+        if (not self._gesto_activo or getattr(self, '_pausado_gesto', False) or 
+                self._procesando_cuadro_gesto or ahora - self._ultimo_cuadro_gesto < 0.30):
             return
         self._ultimo_cuadro_gesto = ahora
         self._procesando_cuadro_gesto = True
@@ -165,9 +181,13 @@ class VisionAnalyzer:
 
     def _analizar_cuadro_gesto(self, cuadro):
         try:
-            palma_abierta = bool(self._detector_gesto.isOpenPalmNv21(
-                cuadro, self._gesto_ancho, self._gesto_alto
-            ))
+            if not self._gesto_activo or getattr(self, '_pausado_gesto', False):
+                return
+            palma_abierta = False
+            if self._detector_gesto:
+                palma_abierta = bool(self._detector_gesto.isOpenPalmNv21(
+                    cuadro, self._gesto_ancho, self._gesto_alto
+                ))
             self._palmas_consecutivas = self._palmas_consecutivas + 1 if palma_abierta else 0
             if self._palmas_consecutivas >= 1:
                 self._palmas_consecutivas = 0
@@ -178,31 +198,57 @@ class VisionAnalyzer:
             self._procesando_cuadro_gesto = False
 
     def _activar_por_gesto(self):
-        if not self._gesto_activo:
+        if not self._gesto_activo or getattr(self, '_pausado_gesto', False):
             return
+        self.pausar_detector_gesto()
         callback = self._callback_gesto
-        self.detener_detector_gesto()
         if callback:
-            callback()
+            try:
+                callback()
+            except Exception as e:
+                print(f"[VisionAnalyzer] Error en callback de activación por gesto: {e}")
 
     def detener_detector_gesto(self):
-        """Libera la cámara de vigilancia para usarla en navegación o foto."""
+        """Libera la cámara de vigilancia de manera segura en el hilo de UI de Android."""
         self._gesto_activo = False
+        self._pausado_gesto = False
         self._palmas_consecutivas = 0
-        try:
-            if self._camara_gesto:
+        cam = self._camara_gesto
+        self._camara_gesto = None
+        self._preview_gesto = None
+        self._surface_gesto = None
+        if cam:
+            try:
+                from jnius import autoclass, PythonJavaClass, java_method
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
+                class SafeCamRunnable(PythonJavaClass):
+                    __javainterfaces__ = ['java/lang/Runnable']
+                    def __init__(self, f):
+                        super().__init__()
+                        self.f = f
+                    @java_method('()V')
+                    def run(self):
+                        self.f()
+                def cerrar():
+                    try:
+                        cam.setPreviewCallback(None)
+                    except Exception:
+                        pass
+                    try:
+                        cam.stopPreview()
+                    except Exception:
+                        pass
+                    try:
+                        cam.release()
+                    except Exception:
+                        pass
+                PythonActivity.mActivity.runOnUiThread(SafeCamRunnable(cerrar))
+            except Exception as error:
+                print(f"[VisionAnalyzer] Error seguro cerrando cámara: {error}")
                 try:
-                    self._camara_gesto.setPreviewCallback(None)
-                    self._camara_gesto.stopPreview()
+                    cam.release()
                 except Exception:
                     pass
-                self._camara_gesto.release()
-        except Exception as error:
-            print(f"[VisionAnalyzer] Error cerrando detector de gesto: {error}")
-        finally:
-            self._camara_gesto = None
-            self._preview_gesto = None
-            self._surface_gesto = None
 
     def capturar_y_analizar(self, callback_resultado, ai_assistant=None):
         """Captura puntual para '¿Qué tengo al frente?'."""

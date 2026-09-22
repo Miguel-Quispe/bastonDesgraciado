@@ -349,39 +349,49 @@ class BastonApp(App):
             self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
 
     def activar_comando_por_gesto(self):
-        """Se activa al ver la palma abierta: detiene la cámara y abre el micrófono de inmediato."""
-        self.lbl_estado.text = "¡Palma detectada! Abriendo micrófono..."
-        self.btn_accion.text = "ABRIENDO MICRÓFONO...\nEspera un segundo"
-        self.btn_accion.background_color = (0.8, 0.5, 0.1, 1)
-        self.voz.detener_voz()
-        self.vision.detener_detector_gesto()
-        Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.15)
+        """Se activa al ver la palma abierta: pausa la cámara y abre el micrófono de inmediato."""
+        try:
+            self.lbl_estado.text = "¡Palma detectada! Abriendo micrófono..."
+            self.btn_accion.text = "PALMA DETECTADA\nAbriendo micrófono..."
+            self.btn_accion.background_color = (0.8, 0.5, 0.1, 1)
+            self.voz.detener_voz()
+            self.vision.pausar_detector_gesto()
+            Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.10)
+        except Exception as e:
+            print(f"[BastonApp] Error en activar_comando_por_gesto: {e}")
 
     def _abrir_comando_por_gesto(self):
         def _al_finalizar_escucha():
             self.programar_reinicio_control_por_gesto()
 
-        self.voz.detener_voz()
-        if self.voz.escuchar_una_vez(self.procesar_comando_texto, _al_finalizar_escucha):
-            self.lbl_estado.text = "Micrófono activo. Di tu comando ahora..."
-            self.btn_accion.text = "MICRÓFONO ACTIVO\nTe escucho, di tu comando..."
-            self.btn_accion.background_color = (0.85, 0.2, 0.2, 1)
-            self.emitir_vibracion_bienvenida()
-        else:
-            self.lbl_estado.text = "Micrófono no disponible. Reintentando..."
-            Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
+        try:
+            self.voz.detener_voz()
+            if self.voz.escuchar_una_vez(self.procesar_comando_texto, _al_finalizar_escucha):
+                self.lbl_estado.text = "Micrófono activo. Di tu comando ahora..."
+                self.btn_accion.text = "MICRÓFONO ACTIVO\nTe escucho, di tu comando..."
+                self.btn_accion.background_color = (0.85, 0.2, 0.2, 1)
+                self.emitir_vibracion_bienvenida()
+            else:
+                self.lbl_estado.text = "Micrófono no disponible. Muestra la palma de nuevo."
+                Clock.schedule_once(lambda dt: self.vision.reanudar_detector_gesto(), 1.0)
+        except Exception as e:
+            print(f"[BastonApp] Error en _abrir_comando_por_gesto: {e}")
+            Clock.schedule_once(lambda dt: self.vision.reanudar_detector_gesto(), 1.0)
 
     def programar_reinicio_control_por_gesto(self):
-        Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), 0.25)
+        Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), 0.40)
 
     def _reanudar_control_por_gesto_si_libre(self):
         if self._camara_en_uso_por_comando or self.gps.navegacion_activa:
             return
-        espera_voz = getattr(self.voz, '_bloqueo_eco_hasta', 0.0) - time.monotonic()
-        if espera_voz > 0:
-            Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), espera_voz + 0.25)
+        espera_voz = getattr(self.voz, "_bloqueo_eco_hasta", 0.0) - time.monotonic()
+        if espera_voz > 0 or getattr(self.voz, "reproduciendo_tts", False):
+            Clock.schedule_once(lambda dt: self._reanudar_control_por_gesto_si_libre(), max(espera_voz, 0.5) + 0.25)
             return
-        self.iniciar_control_por_gesto()
+        self.vision.reanudar_detector_gesto()
+        self.lbl_estado.text = "Cámara trasera activa. Muestra la palma abierta para dar un comando."
+        self.btn_accion.text = "ESPERANDO PALMA ABIERTA\nMuestra tu mano abierta para hablar"
+        self.btn_accion.background_color = (0.1, 0.45, 0.7, 1)
 
     def mantener_activa_con_pantalla_apagada(self):
         try:

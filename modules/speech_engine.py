@@ -501,9 +501,14 @@ class SpeechEngine:
         self.escuchando = False
 
     def escuchar_una_vez(self, callback_comando, callback_finalizar=None):
-        """Detiene locuciones previas, libera el micro y escucha un comando único."""
+        """Detiene locuciones previas, prepara el micro y escucha un comando único."""
         self.detener_voz()
-        self._detener_speech_recognizer_android()
+        if self._evento_reinicio_mic is not None:
+            try:
+                self._evento_reinicio_mic.cancel()
+            except Exception:
+                pass
+            self._evento_reinicio_mic = None
         self._escucha_una_vez = True
         self._callback_fin_escucha_una_vez = callback_finalizar
         self.escuchando = True
@@ -699,16 +704,29 @@ class SpeechEngine:
                         except Exception:
                             pass
                         self.speech_rec = None
+                    if not SpeechRecognizer.isRecognitionAvailable(PythonActivity.mActivity):
+                        print("[SpeechEngine] Reconocimiento de voz no disponible en el dispositivo.")
+                        if self._escucha_una_vez:
+                            self._finalizar_escucha_una_vez()
+                        return
                     self.speech_rec = SpeechRecognizer.createSpeechRecognizer(PythonActivity.mActivity)
+                    if not self.speech_rec:
+                        print("[SpeechEngine] No se pudo instanciar SpeechRecognizer.")
+                        if self._escucha_una_vez:
+                            self._finalizar_escucha_una_vez()
+                        return
                     self.speech_rec.setRecognitionListener(self.escuchador_listener)
 
                     self.intent_escucha = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_LANGUAGE, "es-419")
                     self.intent_escucha.putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, True)
+                    self.intent_escucha.putExtra(RecognizerIntent.EXTRA_MAX_RESULTS, 3)
                     self.speech_rec.startListening(self.intent_escucha)
                 except Exception as e:
                     print(f"[SpeechEngine Error startListening]: {e}")
+                    if self._escucha_una_vez:
+                        self._finalizar_escucha_una_vez()
 
             PythonActivity.mActivity.runOnUiThread(Runnable(accion_ui))
         except Exception as e:
