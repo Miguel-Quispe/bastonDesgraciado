@@ -1,5 +1,25 @@
 import os
 import time
+import sys
+import traceback
+
+def registrar_error_global(exctype, value, tb):
+    print(f"[FATAL_CRASH] Tipo: {exctype}, Detalle: {value}")
+    traceback.print_exception(exctype, value, tb)
+    try:
+        from jnius import autoclass
+        PythonActivity = autoclass('org.kivy.android.PythonActivity')
+        activity = getattr(PythonActivity, 'mActivity', None)
+        if activity:
+            log_dir = activity.getFilesDir().getAbsolutePath()
+            log_path = os.path.join(log_dir, "crash_log.txt")
+            with open(log_path, "w", encoding="utf-8") as f:
+                traceback.print_exception(exctype, value, tb, file=f)
+    except Exception:
+        pass
+
+sys.excepthook = registrar_error_global
+
 try:
     import qrcode
 except ImportError:
@@ -29,15 +49,50 @@ class BastonApp(App):
         Window.clearcolor = (0.05, 0.08, 0.12, 1)
         Window.softinput_mode = 'pan'
 
-        self.bt = BluetoothManager()
-        self.voz = SpeechEngine()
-        self.gps = LocationService()
-        self.vision = VisionAnalyzer()
-        self.agenda = AgendaManager()
-        self.lector = DocumentReader()
-        self.ai = AIAssistant()
-        if hasattr(self, 'user_data_dir') and self.user_data_dir:
-            self.ai.actualizar_directorio_datos(self.user_data_dir)
+        # Inicialización de módulos 100% aislada para que ningún fallo impida abrir la aplicación
+        try:
+            self.bt = BluetoothManager()
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en BluetoothManager: {e}")
+            self.bt = None
+
+        try:
+            self.voz = SpeechEngine()
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en SpeechEngine: {e}")
+            self.voz = None
+
+        try:
+            self.gps = LocationService()
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en LocationService: {e}")
+            self.gps = None
+
+        try:
+            self.vision = VisionAnalyzer()
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en VisionAnalyzer: {e}")
+            self.vision = None
+
+        try:
+            self.agenda = AgendaManager()
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en AgendaManager: {e}")
+            self.agenda = None
+
+        try:
+            self.lector = DocumentReader()
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en DocumentReader: {e}")
+            self.lector = None
+
+        try:
+            self.ai = AIAssistant()
+            if hasattr(self, 'user_data_dir') and self.user_data_dir:
+                self.ai.actualizar_directorio_datos(self.user_data_dir)
+        except BaseException as e:
+            print(f"[BastonApp] Aviso en AIAssistant: {e}")
+            self.ai = None
         
         self.evento_navegacion = None
         self._analizando_camino = False
@@ -78,24 +133,26 @@ class BastonApp(App):
         self.lbl_titulo_hud.bind(size=self.lbl_titulo_hud.setter('text_size'))
         self.bar_superior.add_widget(self.lbl_titulo_hud)
 
-        texto_api_btn = "🔑 Gemini 2.5" if self.ai.tiene_api_key_configurada() else "🔑 Config. API"
+        tiene_api = bool(self.ai and self.ai.tiene_api_key_configurada())
+        texto_api_btn = "🔑 Gemini 2.5" if tiene_api else "🔑 Config. API"
         self.btn_api_rapido = Button(
             text=texto_api_btn,
             font_size='11sp',
             bold=True,
             size_hint=(0.32, 1),
             background_normal='',
-            background_color=(0.14, 0.28, 0.44, 1) if self.ai.tiene_api_key_configurada() else (0.75, 0.40, 0.08, 1),
+            background_color=(0.14, 0.28, 0.44, 1) if tiene_api else (0.75, 0.40, 0.08, 1),
             color=(1, 1, 1, 1)
         )
         self.btn_api_rapido.bind(on_press=self.al_toggle_panel_api)
         self.bar_superior.add_widget(self.btn_api_rapido)
 
+        bt_ok = bool(self.bt and self.bt.esta_conectado())
         self.lbl_baston = Label(
-            text="ᛒ BASTÓN OK" if (hasattr(self, 'bt') and self.bt.esta_conectado()) else "BASTÓN DESC.",
+            text="BASTÓN OK" if bt_ok else "BASTÓN DESC.",
             font_size='12sp',
             bold=True,
-            color=(0.1, 0.85, 0.5, 1) if (hasattr(self, 'bt') and self.bt.esta_conectado()) else (0.9, 0.25, 0.25, 1),
+            color=(0.1, 0.85, 0.5, 1) if bt_ok else (0.9, 0.25, 0.25, 1),
             size_hint=(0.30, 1),
             halign='right',
             valign='middle'
@@ -107,9 +164,9 @@ class BastonApp(App):
 
         # ── 2. VISOR CENTRAL HUD DE ALTO CONTRASTE (Marquesina Principal) ────
         self.lbl_estado = Label(
-            text="✋ ESPERANDO PALMA\n\n[size=14sp]Coloca tu mano frente a la cámara o toca la pantalla abajo[/size]",
+            text="ASISTENTE LISTO\n\n[size=14sp]Toca el botón abajo para dar una orden por voz o usa tu bastón inteligente[/size]",
             markup=True,
-            font_size='24sp',
+            font_size='22sp',
             bold=True,
             color=(1.0, 0.82, 0.0, 1),
             halign='center',
@@ -232,7 +289,7 @@ class BastonApp(App):
         Accesibilidad táctil: Si la navegación está activa, un toque deliberado
         en cualquier parte de la pantalla cancela inmediatamente la ruta.
         """
-        if self.gps.navegacion_activa:
+        if self.gps and self.gps.navegacion_activa:
             ahora = time.time()
             if ahora - self._ultimo_toque_tiempo > 0.5:
                 self._ultimo_toque_tiempo = ahora
@@ -242,17 +299,19 @@ class BastonApp(App):
 
     def cancelar_navegacion_activa(self, motivo=""):
         """Detiene la guía peatonal y devuelve la cámara al modo espera o gestos."""
-        if not self.gps.navegacion_activa and not self.evento_navegacion:
+        if not (self.gps and self.gps.navegacion_activa) and not self.evento_navegacion:
             return
 
-        self.gps.cancelar_navegacion()
+        if self.gps:
+            self.gps.cancelar_navegacion()
         if self.evento_navegacion:
             self.evento_navegacion.cancel()
             self.evento_navegacion = None
 
         self._camara_en_uso_por_comando = False
         self._analizando_camino = False
-        self.voz.detener_voz()
+        if self.voz:
+            self.voz.detener_voz()
         self.emitir_vibracion_bienvenida()
 
         if "gesto" in motivo or "palma" in motivo:
@@ -268,7 +327,8 @@ class BastonApp(App):
             self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
             self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
             self.btn_accion.color = (1, 1, 1, 1)
-            self.voz.hablar("Navegación y copiloto visual cancelados.")
+            if self.voz:
+                self.voz.hablar("Navegación y copiloto visual cancelados.")
             self.programar_reinicio_control_por_gesto(0.2)
 
     def al_toggle_panel_api(self, instance):
@@ -373,19 +433,17 @@ class BastonApp(App):
                     if not audio_concedido:
                         self.lbl_estado.text = "⚠️ Micrófono denegado\n\n[size=14sp]Actívalo en Ajustes de Android para hablar con el asistente[/size]"
                         try:
-                            self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes.")
+                            if self.voz:
+                                self.voz.hablar("Permiso de micrófono denegado. Actívalo en ajustes.")
                         except BaseException:
                             pass
                         return
-
-                    Clock.schedule_once(lambda dt2: self.iniciar_control_por_gesto(), 1.0)
 
                 Clock.schedule_once(procesar, 0.1)
 
             request_permissions(permisos, callback_permisos)
         except BaseException as e:
             print(f"[BastonApp] Permisos nativos no disponibles o error: {e}")
-            Clock.schedule_once(lambda dt: self.iniciar_control_por_gesto(), 1.0)
 
     def emitir_vibracion_bienvenida(self):
         try:
@@ -401,9 +459,20 @@ class BastonApp(App):
             pass
 
     def on_start(self):
-        self.solicitar_permisos_android()
-        self.emitir_vibracion_bienvenida()
-        self.mantener_activa_con_pantalla_apagada()
+        try:
+            self.solicitar_permisos_android()
+        except BaseException as e:
+            print(f"[BastonApp] Error solicitar permisos: {e}")
+
+        try:
+            self.emitir_vibracion_bienvenida()
+        except BaseException as e:
+            print(f"[BastonApp] Error vibracion: {e}")
+
+        try:
+            self.mantener_activa_con_pantalla_apagada()
+        except BaseException as e:
+            print(f"[BastonApp] Error wakelock: {e}")
 
         try:
             from android import activity
@@ -411,18 +480,20 @@ class BastonApp(App):
         except BaseException:
             pass
 
-        try:
-            self.bt.iniciar_auto_reconexion(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
-        except BaseException as e:
-            print(f"[BastonApp] Bluetooth auto-reconexion: {e}")
+        if self.bt:
+            try:
+                self.bt.iniciar_auto_reconexion(self.al_recibir_alerta_baston, self.al_cambio_estado_baston)
+            except BaseException as e:
+                print(f"[BastonApp] Bluetooth auto-reconexion: {e}")
 
-        mensaje_bienvenida = "Asistente listo. Muestra tu palma abierta frente a la cámara trasera para dar un comando."
-        try:
-            self.voz.hablar(mensaje_bienvenida, perfil="animada")
-        except BaseException:
-            pass
+        mensaje_bienvenida = "Asistente listo. Toca la pantalla para hablar."
+        if self.voz:
+            try:
+                self.voz.hablar(mensaje_bienvenida, perfil="animada")
+            except BaseException:
+                pass
 
-        self.lbl_estado.text = "✋ ESPERANDO PALMA\n\n[size=14sp]Coloca tu mano frente a la cámara o toca la pantalla abajo[/size]"
+        self.lbl_estado.text = "ASISTENTE LISTO\n\n[size=14sp]Toca el botón abajo o en cualquier parte para hablar[/size]"
         self.btn_accion.text = "HABLAR AHORA\nTOCA EN CUALQUIER PARTE"
         self.btn_accion.background_color = (0.06, 0.72, 0.45, 1)
         self.btn_accion.color = (0, 0, 0, 1)
@@ -509,12 +580,15 @@ class BastonApp(App):
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             Context = autoclass('android.content.Context')
             PowerManager = autoclass('android.os.PowerManager')
-            activity = PythonActivity.mActivity
+            activity = getattr(PythonActivity, 'mActivity', None)
+            if not activity:
+                return
             power_manager = activity.getSystemService(Context.POWER_SERVICE)
-            self._wake_lock = power_manager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BastonInteligente:Asistencia")
-            self._wake_lock.setReferenceCounted(False)
-            self._wake_lock.acquire()
-        except Exception:
+            if power_manager:
+                self._wake_lock = power_manager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "BastonInteligente:Asistencia")
+                self._wake_lock.setReferenceCounted(False)
+                self._wake_lock.acquire()
+        except BaseException:
             pass
 
     def al_recibir_resultado_actividad(self, request_code, result_code, intent_data):
@@ -557,11 +631,12 @@ class BastonApp(App):
                 self.programar_reinicio_control_por_gesto(0.2)
 
     def al_presionar_boton_escucha(self, instance):
-        if self.gps.navegacion_activa:
+        if self.gps and self.gps.navegacion_activa:
             self.cancelar_navegacion_activa("por botón táctil")
             return
 
-        self.vision.pausar_detector_gesto()
+        if self.vision:
+            self.vision.pausar_detector_gesto()
         self.activar_comando_por_gesto()
 
     def al_recibir_parcial(self, texto_parcial):
@@ -599,13 +674,15 @@ class BastonApp(App):
                 "para detección de obstáculos y lectura de documentos, además de inteligencia artificial. ¡El bastón inteligente se encuentra en línea y listo para la demostración!"
             )
             self.lbl_estado.text = "Presentando proyecto al jurado..."
-            self.voz.hablar_respuesta_ia(intro_jurado)
+            if self.voz:
+                self.voz.hablar_respuesta_ia(intro_jurado)
             return
 
         # NODO 0: Saludo y Activación por voz
         if any(w in texto for w in ["hola", "saludo", "buenas", "activado", "estas ahi", "ayuda", "quien eres"]):
-            nombre_act = self.voz.nombre_asistente.capitalize()
-            self.voz.hablar(f"¡Hola! Soy tu {nombre_act} de asistencia. ¡Te escucho! Puedo ayudarte con la cámara, agenda, batería, ubicación, guiado de ruta o responder cualquier duda.", perfil="animada")
+            nombre_act = (self.voz.nombre_asistente if self.voz else "Optimus").capitalize()
+            if self.voz:
+                self.voz.hablar(f"¡Hola! Soy tu {nombre_act} de asistencia. ¡Te escucho! Puedo ayudarte con la cámara, agenda, batería, ubicación, guiado de ruta o responder cualquier duda.", perfil="animada")
             self.lbl_estado.text = "Asistente activo. ¡Te escucho!"
             return
 
@@ -613,26 +690,30 @@ class BastonApp(App):
         if any(w in texto for w in ["bateria", "carga", "pila", "nivel de bateria", "bateria actual", "cuanta bateria", "que bateria"]):
             estado_bat = obtener_nivel_bateria()
             self.lbl_estado.text = estado_bat
-            self.voz.hablar(estado_bat)
+            if self.voz:
+                self.voz.hablar(estado_bat)
             return
 
         # NODO 2: Cancelar Navegación Activa (por voz)
         if any(w in texto for w in ["cancelar ruta", "detener guia", "parar ruta", "cancelar navegacion", "detener navegacion", "cancelar guia", "detener copiloto", "detener", "para", "cancela", "cancelar"]):
-            if self.gps.navegacion_activa:
+            if self.gps and self.gps.navegacion_activa:
                 self.cancelar_navegacion_activa("por orden de voz")
                 return
 
         # NODO 3: Ajustes de la Voz del Asistente
         if any(w in texto for w in ["mas lento", "habla mas lento", "despacio", "mas despacio"]):
-            self.voz.cambiar_velocidad(-0.15)
+            if self.voz:
+                self.voz.cambiar_velocidad(-0.15)
             return
 
         if any(w in texto for w in ["mas rapido", "habla mas rapido"]):
-            self.voz.cambiar_velocidad(+0.15)
+            if self.voz:
+                self.voz.cambiar_velocidad(+0.15)
             return
 
         if any(w in texto for w in ["cambiar voz", "otra voz", "voz masculina", "voz femenina", "voz grave", "voz aguda"]):
-            self.voz.cambiar_tono()
+            if self.voz:
+                self.voz.cambiar_tono()
             return
 
         # NODO 4: Navegación y Guiado Peatonal Asistido con Visión

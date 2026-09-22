@@ -171,7 +171,7 @@ class SpeechEngine:
 
     def _inicializar_android(self):
         try:
-            from jnius import autoclass, PythonJavaClass, java_method
+            from jnius import autoclass
             self.PythonActivity = autoclass('org.kivy.android.PythonActivity')
             self.activity = getattr(self.PythonActivity, 'mActivity', None)
             if not self.activity:
@@ -179,64 +179,25 @@ class SpeechEngine:
                 return
 
             self.TextToSpeech = autoclass('android.speech.tts.TextToSpeech')
-            self.tts_listo = False
-
-            class TTSInitListener(PythonJavaClass):
-                __javainterfaces__ = ['android/speech/tts/TextToSpeech$OnInitListener']
-                def __init__(self, engine):
-                    super().__init__()
-                    self.engine = engine
-
-                @java_method('(I)V')
-                def onInit(self, status):
-                    try:
-                        if status == 0:
-                            self.engine.tts_listo = True
-                            try:
-                                Locale = autoclass('java.util.Locale')
-                                self.engine.tts.setLanguage(Locale("es", "ES"))
-                            except BaseException:
-                                pass
-                            self.engine._configurar_listener_fin_locucion()
-                            self.engine._aplicar_parametros_tts_android()
-                    except BaseException as ex:
-                        print(f"[SpeechEngine] Aviso en callback onInit: {ex}")
-
-            self.tts_listener = TTSInitListener(self)
-            self.tts = self.TextToSpeech(self.activity, self.tts_listener)
+            # Patrón estándar de Plyer para Android: Pasar None en lugar de un listener en el constructor.
+            # Los callbacks nativos de hilos Binder de Android hacia PyJNIus sin GIL provocan cierres forzados (SIGSEGV/SIGABRT).
+            self.tts = self.TextToSpeech(self.activity, None)
+            self.tts_listo = True
+            try:
+                Locale = autoclass('java.util.Locale')
+                self.tts.setLanguage(Locale("es", "ES"))
+            except Exception:
+                pass
+            self._aplicar_parametros_tts_android()
+            print("[SpeechEngine] Android TextToSpeech inicializado de forma robusta sin listeners propensos a fallos.")
         except BaseException as e:
             print(f"[SpeechEngine] Aviso al inicializar TTS en Android: {e}")
             self.tts = None
             self.tts_listo = False
 
     def _configurar_listener_fin_locucion(self):
-        """Configura el callback de fin de locución de forma 100% segura mediante OnUtteranceCompletedListener (interfaz nativa)."""
-        if not self.tts:
-            return
-        try:
-            from jnius import autoclass, PythonJavaClass, java_method
-            
-            # OnUtteranceCompletedListener es una INTERFAZ nativa válida en Android y compatible con PyJNIus
-            class FinLocucionListener(PythonJavaClass):
-                __javainterfaces__ = ['android/speech/tts/TextToSpeech$OnUtteranceCompletedListener']
-                def __init__(self, engine):
-                    super().__init__()
-                    self.engine = engine
-
-                @java_method('(Ljava/lang/String;)V')
-                def onUtteranceCompleted(self, utteranceId):
-                    def al_completar(dt):
-                        self.engine.reproduciendo_tts = False
-                        if self.engine.escuchando:
-                            self.engine._reiniciar_escucha_android()
-                    Clock.schedule_once(al_completar, 0.3)
-
-            self.tts_progress_listener = FinLocucionListener(self)
-            self.tts.setOnUtteranceCompletedListener(self.tts_progress_listener)
-            print("[SpeechEngine] Listener de fin de locución activo.")
-        except BaseException as e:
-            print(f"[SpeechEngine] Listener de fin de locución omitido (se usará temporizador seguro): {e}")
-            self.tts_progress_listener = None
+        """Omitido intencionalmente: se utiliza temporizador por Clock para máxima estabilidad y evitar cuelgues por callbacks JNI."""
+        self.tts_progress_listener = None
 
     def _loop_tts_pc(self):
         sp_voice = None
@@ -391,6 +352,13 @@ class SpeechEngine:
                     if res != 0 and reintentos > 0:
                         self.reproduciendo_tts = False
                         Clock.schedule_once(lambda dt: self.hablar(texto, reintentos - 1, perfil=perfil), 0.5)
+
+                def _liberar_tts(dt):
+                    self.reproduciendo_tts = False
+                    if self.escuchando:
+                        self._reiniciar_escucha_android()
+
+                Clock.schedule_once(_liberar_tts, duracion_estimada)
             except Exception:
                 self.reproduciendo_tts = False
         else:

@@ -151,7 +151,7 @@ class BluetoothManager:
         except ImportError:
             self.ultimo_error = "Bluetooth nativo no disponible en PC."
             return False
-        except Exception as e:
+        except (Exception, BaseException) as e:
             self._cerrar_socket_actual()
             return self._fallar(f"No se pudo conectar al bastón: {e}")
 
@@ -164,12 +164,15 @@ class BluetoothManager:
 
         def loop_auto():
             while True:
-                if not self.conectado and not self.conectando and not self.desconexion_voluntaria:
-                    exito = self.conectar()
-                    if exito:
-                        if self._callback_estado:
-                            self._callback_estado("Conectado al Bastón")
-                        self.escuchar_alertas_baston(self._callback_alerta, self._callback_estado)
+                try:
+                    if not self.conectado and not self.conectando and not self.desconexion_voluntaria:
+                        exito = self.conectar()
+                        if exito:
+                            if self._callback_estado:
+                                self._callback_estado("Conectado al Bastón")
+                            self.escuchar_alertas_baston(self._callback_alerta, self._callback_estado)
+                except (Exception, BaseException) as err:
+                    print(f"[BluetoothManager] Bucle auto-reconexión: {err}")
                 time.sleep(5)
 
         self._hilo_auto_reconexion = threading.Thread(target=loop_auto, daemon=True)
