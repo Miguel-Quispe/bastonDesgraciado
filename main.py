@@ -56,59 +56,62 @@ class BastonApp(App):
             spacing=dp(10)
         )
 
-        # ── 1. BARRA SUPERIOR HUD (Estado en vivo y Acceso Rápido a Gemini) ──
+        # ── 1. BARRA SUPERIOR HUD (Telemetría en vivo y Acceso Rápido a Gemini) ──
         self.bar_superior = BoxLayout(
             orientation='horizontal',
             size_hint=(1, None),
-            height=dp(42),
+            height=dp(44),
             spacing=dp(6)
         )
 
-        self.lbl_baston = Label(
-            text="BASTÓN OK" if (hasattr(self, 'bt') and self.bt.esta_conectado()) else "BASTÓN DESC.",
+        nombre_actual = self._cargar_nombre_asistente()
+        self.lbl_titulo_hud = Label(
+            text=f"{nombre_actual.upper()}\n[size=10sp]BASTÓN INTELIGENTE[/size]",
+            markup=True,
             font_size='13sp',
             bold=True,
-            color=(1.0, 0.85, 0.0, 1) if (hasattr(self, 'bt') and self.bt.esta_conectado()) else (0.85, 0.3, 0.3, 1),
+            color=(1.0, 0.82, 0.0, 1),
             size_hint=(0.38, 1),
             halign='left',
             valign='middle'
         )
-        self.lbl_baston.bind(size=self.lbl_baston.setter('text_size'))
-        self.bar_superior.add_widget(self.lbl_baston)
+        self.lbl_titulo_hud.bind(size=self.lbl_titulo_hud.setter('text_size'))
+        self.bar_superior.add_widget(self.lbl_titulo_hud)
 
-        self.lbl_gps = Label(
-            text="GPS ACTIVO",
-            font_size='12sp',
-            bold=True,
-            color=(0.2, 0.85, 0.5, 1),
-            size_hint=(0.28, 1),
-            halign='center',
-            valign='middle'
-        )
-        self.lbl_gps.bind(size=self.lbl_gps.setter('text_size'))
-        self.bar_superior.add_widget(self.lbl_gps)
-
-        texto_api_btn = "🔑 Gemini OK" if self.ai.tiene_api_key_configurada() else "🔑 Config. API"
+        texto_api_btn = "🔑 Gemini 2.5" if self.ai.tiene_api_key_configurada() else "🔑 Config. API"
         self.btn_api_rapido = Button(
             text=texto_api_btn,
-            font_size='12sp',
+            font_size='11sp',
             bold=True,
-            size_hint=(0.34, 1),
+            size_hint=(0.32, 1),
             background_normal='',
-            background_color=(0.18, 0.35, 0.52, 1) if self.ai.tiene_api_key_configurada() else (0.8, 0.45, 0.1, 1),
+            background_color=(0.14, 0.28, 0.44, 1) if self.ai.tiene_api_key_configurada() else (0.75, 0.40, 0.08, 1),
             color=(1, 1, 1, 1)
         )
         self.btn_api_rapido.bind(on_press=self.al_toggle_panel_api)
         self.bar_superior.add_widget(self.btn_api_rapido)
 
+        self.lbl_baston = Label(
+            text="ᛒ BASTÓN OK" if (hasattr(self, 'bt') and self.bt.esta_conectado()) else "BASTÓN DESC.",
+            font_size='12sp',
+            bold=True,
+            color=(0.1, 0.85, 0.5, 1) if (hasattr(self, 'bt') and self.bt.esta_conectado()) else (0.9, 0.25, 0.25, 1),
+            size_hint=(0.30, 1),
+            halign='right',
+            valign='middle'
+        )
+        self.lbl_baston.bind(size=self.lbl_baston.setter('text_size'))
+        self.bar_superior.add_widget(self.lbl_baston)
+
         self.layout.add_widget(self.bar_superior)
 
         # ── 2. VISOR CENTRAL HUD DE ALTO CONTRASTE (Marquesina Principal) ────
         self.lbl_estado = Label(
-            text="Asistente de Autonomía\nEscucha activa",
-            font_size='22sp',
+            text="✋ ESPERANDO PALMA\n\n[size=14sp]Coloca tu mano frente a la cámara o toca la pantalla abajo[/size]",
+            markup=True,
+            font_size='24sp',
             bold=True,
-            color=(1, 1, 1, 1),
+            color=(1.0, 0.82, 0.0, 1),
             halign='center',
             valign='middle',
             size_hint=(1, 1)
@@ -207,14 +210,14 @@ class BastonApp(App):
 
         # ── 4. BOTÓN GIGANTE ACCESIBLE DE ESCUCHA (125dp Altura) ─────────────
         self.btn_accion = Button(
-            text="ESCUCHA ACTIVA\nToca o muestra tu palma",
-            font_size='20sp',
+            text="HABLAR AHORA\nTOCA EN CUALQUIER PARTE",
+            font_size='21sp',
             bold=True,
             size_hint=(1, None),
             height=dp(125),
             background_normal='',
-            background_color=(0.08, 0.65, 0.42, 1),
-            color=(1, 1, 1, 1),
+            background_color=(0.06, 0.72, 0.45, 1),
+            color=(0, 0, 0, 1),
             halign='center',
             valign='middle'
         )
@@ -439,9 +442,10 @@ class BastonApp(App):
                 self.cancelar_navegacion_activa("por gesto de palma")
                 return
 
-            self.lbl_estado.text = "¡Palma detectada! Abriendo micrófono..."
-            self.btn_accion.text = "PALMA DETECTADA\nAbriendo micrófono..."
-            self.btn_accion.background_color = (0.8, 0.5, 0.1, 1)
+            self.lbl_estado.text = "✋ ¡MANO DETECTADA!\n\n[size=14sp]Abriendo micrófono...[/size]"
+            self.lbl_estado.color = (1.0, 0.85, 0.1, 1)
+            self.btn_accion.text = "¡MANO DETECTADA!\nABRIENDO MICRÓFONO..."
+            self.btn_accion.background_color = (0.9, 0.6, 0.1, 1)
             self.btn_accion.color = (0, 0, 0, 1)
             self.vision.pausar_detector_gesto()
             Clock.schedule_once(lambda dt: self._abrir_comando_por_gesto(), 0.10)
@@ -479,9 +483,11 @@ class BastonApp(App):
         # La cámara se reenciende de inmediato y vigila la palma abierta mientras el asistente responde
         self.vision.reanudar_detector_gesto(self.activar_comando_por_gesto)
 
-        self.btn_accion.text = "ESCUCHA ACTIVA\nHabla libremente"
-        self.btn_accion.background_color = (0.1, 0.65, 0.45, 1)
-        self.btn_accion.color = (1, 1, 1, 1)
+        self.lbl_estado.text = "✋ ESPERANDO PALMA\n\n[size=14sp]Coloca tu mano frente a la cámara o toca la pantalla abajo[/size]"
+        self.lbl_estado.color = (1.0, 0.82, 0.0, 1)
+        self.btn_accion.text = "HABLAR AHORA\nTOCA EN CUALQUIER PARTE"
+        self.btn_accion.background_color = (0.06, 0.72, 0.45, 1)
+        self.btn_accion.color = (0, 0, 0, 1)
 
     def mantener_activa_con_pantalla_apagada(self):
         try:
